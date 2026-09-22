@@ -1,34 +1,47 @@
-[tool.poetry]
-name = "metac-bot-template"
+[project]
+name = "betomcat"
 version = "0.1.0"
-description = ""
-authors = ["Vasile Popescu <elisescu@elisescu.com>"]
+description = "FutureEval forecasting bot (v1) fed by the Intelligence Workbench evidence layer"
 readme = "README.md"
-package-mode = false
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "forecasting-tools>=0.3.1,<0.4",
+    "httpx>=0.28,<1",
+    "orjson>=3.10,<4",
+    "pydantic>=2.9,<3",
+    "pyyaml>=6.0,<7",
+    "python-dotenv>=1.0,<2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-python-decouple = "^3.8"
-requests = "^2.32.3"
-asknews = "^0.13.11"
-numpy = "^2.3.0"
-openai = "^2.0.0"
-python-dotenv = "^1.0.1"
-forecasting-tools = "^0.2.90"
-
-
-[tool.poetry.group.integrations]
-optional = true
-
-[tool.poetry.group.integrations.dependencies]
-lightningrod-ai = "^0.1.14"
-metaculus-bot-review = "^0.1.1"
-
-
-[tool.poetry.group.dev.dependencies]
-ipykernel = "^6.29.5"
+[dependency-groups]
+dev = [
+    "mypy>=1.15",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-httpx>=0.35",
+    "ruff>=0.9",
+    "types-pyyaml>=6.0",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/betomcat"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

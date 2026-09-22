@@ -1,0 +1,126 @@
+# betomcat build log
+
+Running trace of the v1 bot + Intelligence Workbench (IW) Phase-1 build.
+Newest entries at the bottom of each section. Source of intent: `docs/brief.md`,
+`docs/spec.md`. Cross-repo contracts: `docs/contracts.md`.
+
+---
+
+## 0. Audit (2026-09-22)
+
+### betomcat (this repo)
+
+- A plain clone of `Metaculus/metac-bot-template` (last upstream commit `6dab04c`),
+  remote `git@github.com:Enhso/betomcat.git`. Nothing custom yet.
+- `main.py` is the *Summer* 2026 template; `forecasting-tools` 0.3.1 already ships a
+  Fall 2026 template and points `CURRENT_AI_COMPETITION_ID` at FE Fall 2026 (33121)
+  and `CURRENT_MINIBENCH_ID` at `minibench`.
+- **Hazard:** `.github/workflows/run_bot_on_tournament.yaml` runs the *template*
+  every 20 min. If a `METACULUS_TOKEN` secret were ever added to this repo, the
+  template would forecast under v1's account and pollute the v1-vs-v2 comparison.
+  Removed in chunk C0.
+
+### Intelligence Workbench (`../iw`)
+
+What runs (verified 2026-09-22: `cargo test` 7/7, `uv run pytest` 90/90):
+
+- Rust `iw-server` (Axum 0.8, mnestic 0.18 embedded graph/vector DB) owns the DB.
+  Endpoints: `/health`, `POST /api/ingest`, `POST /api/questions`,
+  `GET /api/dossiers/{id}/briefing`.
+- Python `iw-research` stateless worker: Wikipedia + arXiv fetch, polars
+  normalisation, one-LLM extraction into entities/events/claims/evidence/causal
+  links, forecasting-language filter. Spawned by Rust as a subprocess.
+- Deterministic 11-section briefing renderer (PRD s10), no LLM prose, cannot emit
+  probabilities by construction. Epistemic firewall already enforced.
+
+What does not exist (gaps against brief s4 / spec s1-4):
+
+| Need | State |
+|---|---|
+| As-of corpus: fetch time + content hash, versioned, never overwritten | Missing. `source` has `retrieved_at` only; every relation is a keyed `:put`, so re-ingest overwrites. No content stored (only excerpts). |
+| "Evidence as of T" query | Missing. |
+| Families as first-class objects | Missing. |
+| Claim support score | Partial: evidence has `stance` + `quality`; no per-claim support. |
+| Personal / bot forecast history | Missing. |
+| AskNews news + wiki providers | Missing (Wikipedia + arXiv only). |
+| Jev gates | Missing. |
+| Persistence in practice | `sqlite` engine exists; default is in-memory. |
+
+`docs/todo.md` in IW describes an older GitOps design and is stale; `plan-phase1.md`
+is what was actually built.
+
+### External services (verified 2026-09-22)
+
+- OpenRouter key: **$99.33 remaining**, 1000 free-model requests/day.
+  Account's allowed-providers list is `openai, anthropic, google-ai-studio`, so
+  most `:free` models are refused (only `google/gemma-4-31b-it:free` works).
+  `thinkingmachines/inkling:free` is agentic-harness-only: unusable.
+- AskNews: new-style `ank_` key works as `Authorization: Bearer`; `/v1/news/search`
+  and `/v1/wiki/search` both return 200.
+- Jev (TypeSafe): **not on OpenRouter**. Needs its own key from
+  `console.typesafe.ai` (waitlist removed 2026-09-20). `POST
+  https://api.typesafe.ai/v1/systemone`, model `jev-latest`/`jev-1.13`.
+- Metaculus: no bot token yet.
+
+---
+
+## 1. Architecture decisions (Claude Code's call per brief s8 / spec s10)
+
+1. **The Workbench is IW, extended in place**, not a bot-side corpus. Rust keeps
+   sole DB ownership; the Python worker stays stateless.
+2. **As-of corpus = mnestic bitemporality.** Every IW relation gets a trailing
+   `tt: TxTime` key column. Transaction time is stamped by the engine at commit
+   and cannot be supplied by callers, so `:as_of "T"` reproduces the corpus
+   (and the briefing) exactly as it stood at T, with no leakage by construction.
+   `:put` on a TxTime relation appends a version; nothing is overwritten.
+   Document bodies are content-addressed (`blob {content_hash => content}`).
+   `fetched_at` is also kept as a plain value (worker wall clock).
+3. **Bot talks to IW over localhost HTTP.** If IW is *down* (connection refused /
+   5xx), the bot falls back to a first-class direct-AskNews research path and
+   spools the fetched documents (with fetch time + sha256) to an outbox that is
+   replayed into IW later, so the as-of discipline holds even in degraded mode.
+   If IW is merely *slow*, the bot waits (spec s6: no thin-briefing shortcut).
+4. **Provisional submission.** The bot submits as soon as it has any valid
+   forecast and resubmits when it has a better one (e.g. the second model
+   arrives). Spot scoring counts only the last pre-close forecast, so the final
+   number is unchanged from spec s5/s6; this only removes crash-between-steps
+   misses. Every submission gets its own private comment.
+5. **Weight job runs on the VM (systemd timer, `Persistent=true`, retry on
+   failure), not GitHub Actions.** Spec s7 allows Actions; it does not require
+   it, and the per-model ledger lives on the VM anyway.
+6. **Hosting: Oracle Cloud Always Free (Ampere A1 ARM, up to 4 OCPU / 24 GB).**
+   Enough RAM to build Rust + run mnestic + Python on the box. Fallback: GCP
+   e2-micro with a prebuilt binary.
+7. **Package management: uv** (converted from Poetry). `forecasting-tools` is used
+   for its Metaculus client, question models and numeric-distribution helpers,
+   not for its `ForecastBot` orchestration (our draw / reconcile / deadline logic
+   does not fit its median-of-N shape).
+8. **Forecasting prompts live in `prompts/*.md`**, editable without code changes.
+   They are tradecraft: flagged for Hatim's review.
+
+---
+
+## 2. Chunk plan
+
+| # | Chunk | Repo | Status |
+|---|---|---|---|
+| C0 | Repo prep: uv, `.env`, remove template workflows, this log, contracts | betomcat | done |
+| C1 | IW Rust: TxTime schema, blobs, families, claim support, history, new endpoints | iw | pending |
+| C2 | IW worker: AskNews news+wiki, content hashing, Jev client + gates, family classify/mint, stdin/stdout subcommands | iw/python | pending |
+| C3 | Bot core: pool/draw/reconcile, forecasters + prompts, deadline ladder, comment, ledger, IW client + fallback, daemon + CLI | betomcat | pending |
+| C4 | Deploy: VM bootstrap, systemd units (iw-server, daemon, timers), deploy script | both | blocked on VM |
+| C5 | Weekly/daily jobs: weights, referee gate, digest, review-bot mechanics, merge candidates, personal-history backfill | both | pending |
+| C6 | v2 control bot: fork upstream template, secrets, Actions | GitHub | Hatim |
+
+Go-live gate for MiniBench: C1 + C2 + C3 green, C4 deployed, Metaculus token set,
+one successful dry run and one live run on the bot-testing-area tournament.
+
+---
+
+## 3. Open items for Hatim
+
+Tracked in the chat hand-off; resolved answers get recorded here.
+
+---
+
+## 4. Chunk log
