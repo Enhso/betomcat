@@ -16,15 +16,24 @@ Hatim's one-time secrets script.
 | IW | `~/projects/iw`, private `Enhso/iw` | `c0a0bda`, pushed; Hatim's own `prompt.txt` edit is unstaged, leave it |
 | vezocontrol (v2) | `~/projects/vezocontrol` | `1b1eda1`, not on GitHub yet (the setup script creates and pushes it) |
 
-Green at last check: bot 143 tests, IW worker 176, IW Rust 104; ruff, mypy,
+Green at last check: bot 163 tests, IW worker 176, IW Rust 104; ruff, mypy,
 clippy, fmt clean.
+
+Lessons from this session worth keeping:
+- Builder "green" reports were right about tests but twice wrong about behaviour
+  (C4a's claim cap and log redaction). Always demand one real run, and read the
+  ledger yourself before trusting it.
+- Every live check against a real API found something the mocks hid: AskNews's
+  `documents` key and 10-article cap, BYOK billing, the Summer tournament pin, the
+  22-day practice question. Budget one cheap live probe per external integration.
+- The auto-mode classifier blocks secret writes and public-repo creation from
+  this session. Package those steps as a script Hatim runs himself.
 
 ## Go-live checklist (in order)
 
-1. **C3c** (builder `c3c-byok-late-window`, may have finished): BYOK cost parsing
-   in `llm.py`, BYOK day spend in `budget.py`, late-window claiming in
-   `daemon.py`. Verify with `uv run ruff check src tests && uv run ruff format
-   --check src tests && uv run mypy src && uv run pytest -q`, then commit.
+1. ~~C3c~~ done and verified, `f73ac98` (BYOK cost + day spend, late-window
+   claiming; bot suite 163 tests green). Check suite command:
+   `uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src && uv run pytest -q`.
 2. **Re-run the dry run yourself** (so far it is only builder-reported): build IW
    (`cd ~/projects/iw && cargo build --release`), then from betomcat
    `set -a; . ./.env; set +a; IW_DIR=~/projects/iw DRY_RUN=1 LATE_WINDOW_MINUTES=100000 uv run betomcat host --local --shift-minutes 20 --max-questions 1`
