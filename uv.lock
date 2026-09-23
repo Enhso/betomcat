@@ -214,6 +214,7 @@ name = "betomcat"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "forecasting-tools" },
     { name = "httpx" },
     { name = "orjson" },
@@ -234,6 +235,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=43.0,<47" },
     { name = "forecasting-tools", specifier = ">=0.3.1,<0.4" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "orjson", specifier = ">=3.10,<4" },

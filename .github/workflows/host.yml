@@ -1,0 +1,117 @@
+# Live-bot host, per docs/BUILD_LOG.md "Answers received 2026-09-22
+# (evening)": there is no always-on VM, so the daemon runs as ~5.5h shifts
+# inside GitHub Actions jobs. Each shift restores its state from an
+# encrypted GitHub Release snapshot, runs iw-server + the daemon loop, and
+# dispatches its own successor via workflow_dispatch before it ends, so
+# the chain of shifts does not depend on cron timing lining up. The
+# `*/30` cron below is only a backstop in case a dispatch is ever missed.
+name: host
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  # Scheduled triggers must not start a second shift on top of one already
+  # running (or about to run); workflow_dispatch triggers (the normal,
+  # self-chained path) always proceed.
+  guard:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          other_runs=$(gh run list --repo "${{ github.repository }}" \
+            --workflow=host.yml --json status \
+            --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length')
+          # This run itself is already counted as in_progress/queued, so
+          # more than one means a genuinely separate shift is active.
+          if [ "$other_runs" -gt 1 ]; then
+            echo "another shift is already running or queued ($other_runs), skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  host:
+    needs: [guard]
+    if: always() && (github.event_name != 'schedule' || needs.guard.outputs.skip != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout betomcat
+        uses: actions/checkout@v4
+
+      - name: Checkout Intelligence Workbench
+        uses: actions/checkout@v4
+        with:
+          repository: Enhso/iw
+          ssh-key: ${{ secrets.IW_DEPLOY_KEY }}
+          path: iw
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iw
+
+      - name: Build iw-server
+        working-directory: iw
+        run: cargo build --release
+
+      - name: Sync betomcat dependencies
+        run: uv sync
+
+      - name: Sync iw-research worker dependencies
+        working-directory: iw/python
+        run: uv sync
+
+      - name: Run host shift
+        id: run_host
+        env:
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_FREE_API_KEY: ${{ secrets.OPENROUTER_FREE_API_KEY }}
+          ASKNEWS_API_KEY: ${{ secrets.ASKNEWS_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IW_DIR: ${{ github.workspace }}/iw
+        run: uv run betomcat host --shift-minutes 330
+
+      # Belt-and-suspenders: if the host step above dispatched its
+      # successor (see betomcat.host._dispatch_successor), it wrote the
+      # flag file and there is nothing to do here. If the step crashed,
+      # timed out, or was cancelled before reaching that point, this
+      # dispatches the successor anyway so a shift is never dropped.
+      - name: Dispatch successor if the host step did not already
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .betomcat-dispatched ]; then
+            echo "host step did not record a dispatch, dispatching successor now"
+            gh api --method POST \
+              "/repos/${{ github.repository }}/actions/workflows/host.yml/dispatches" \
+              -f ref=main
+          else
+            echo "successor already dispatched by the host step"
+          fi
