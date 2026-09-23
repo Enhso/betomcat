@@ -13,6 +13,9 @@ dependencies = [
     "python-dotenv>=1.0,<2",
 ]
 
+[project.scripts]
+betomcat = "betomcat.cli:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.15",

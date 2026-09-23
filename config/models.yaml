@@ -1,0 +1,61 @@
+# betomcat model pool (spec s5). Hot-editable, re-read on every draw.
+#
+# tier: frontier | free | cheap. Frontier spend is only ever permitted for the
+# two forecast-generating model calls (spec s5); every other gate in this
+# codebase must stay off this file's frontier entries.
+# reasoning: passed through verbatim as OpenRouter's `reasoning` param.
+
+ensemble_width: 2
+
+models:
+  - id: anthropic/claude-sonnet-5
+    tier: frontier
+    enabled: true
+    max_tokens: 4000
+    reasoning:
+      effort: medium
+    notes: "Primary frontier peer."
+
+  - id: anthropic/claude-opus-5.5
+    tier: frontier
+    enabled: true
+    max_tokens: 4000
+    reasoning:
+      effort: medium
+    notes: "Primary frontier peer."
+
+  - id: openai/gpt-6-sol
+    tier: frontier
+    enabled: true
+    max_tokens: 4000
+    reasoning:
+      effort: medium
+    notes: "Primary frontier peer."
+
+  - id: google/gemma-4-31b-it:free
+    tier: free
+    enabled: true
+    max_tokens: 4000
+    reasoning: null
+    notes: "Only :free model this OpenRouter account's allowed-providers list accepts."
+
+  - id: nvidia/nemotron-3-ultra-550b-a55b:free
+    tier: free
+    enabled: false
+    max_tokens: 4000
+    reasoning: null
+    notes: "blocked by OpenRouter allowed-providers setting (settings/privacy)"
+
+  - id: qwen/qwen3.8-27b:free
+    tier: free
+    enabled: false
+    max_tokens: 4000
+    reasoning: null
+    notes: "blocked by OpenRouter allowed-providers setting (settings/privacy)"
+
+  - id: nex-agi/nex-n2.5-pro:free
+    tier: free
+    enabled: false
+    max_tokens: 4000
+    reasoning: null
+    notes: "blocked by OpenRouter allowed-providers setting (settings/privacy)"

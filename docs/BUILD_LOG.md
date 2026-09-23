@@ -121,6 +121,94 @@ one successful dry run and one live run on the bot-testing-area tournament.
 
 Tracked in the chat hand-off; resolved answers get recorded here.
 
+Accounts / access (blocking go-live marked *):
+
+- [ ] * Metaculus v1 bot account + token (primary, prize-eligible).
+- [ ] * Oracle Cloud Always Free account + Ampere A1 VM (Ubuntu 24.04, 2 OCPU /
+      12 GB is plenty), with `~/.ssh/id_ed25519.pub` from the dev machine installed;
+      send the public IP.
+- [ ] OpenRouter `settings/privacy`: widen allowed providers so free models work
+      (currently only openai/anthropic/google-ai-studio). Budget-relevant.
+- [ ] TypeSafe key from `console.typesafe.ai` (Jev gates fail open without it).
+- [ ] v2 control: second Metaculus bot account with version suffix; import
+      `Metaculus/metac-bot-template` as a new repo; secrets `METACULUS_TOKEN` (v2's)
+      and `ASKNEWS_API_KEY` only. **Never give v2 the OpenRouter key**: the
+      unmodified template would then run `openrouter/openai/gpt-4o` x5 per question
+      on the shared $100. With only a Metaculus token it uses the free
+      `metaculus/gpt-4o` proxy.
+- [ ] Personal history: Metaculus username + either a data export or a personal
+      token (read-only use) for the one-time backfill.
+
+Decisions (defaults in force until answered):
+
+- [ ] Model pool: Sonnet 5, Opus 5.5, GPT-6 Sol (paid) + Gemma 4 31B (free) +
+      three free models waiting on the provider setting.
+- [ ] Budget pacing guard: auto-disable the priciest paid model when projected
+      spend exceeds remaining credit (default) vs. alert only.
+- [ ] Referee-triggered re-research (spec s5): does it also re-run both forecasts
+      on the refreshed briefing (costs 2 more frontier calls on disagreement
+      questions)? Default: yes, only if before the soft threshold.
+- [ ] Binary clamp [0.01, 0.99] on each model's probability (default) vs.
+      Metaculus's [0.001, 0.999].
+- [ ] Weekly digest delivery: GitHub issue on this repo (default) vs. SMTP.
+- [ ] Review `prompts/*.md` once C3 lands (tradecraft).
+- Interpretation recorded: spec s2 "confidence >= 50%" is implemented as the
+  selected family's Jev probability >= 0.5 (Jev's separate `confidence` field is
+  logged alongside).
+
+### Answers received 2026-09-22 (evening)
+
+- v1 bot `vezo3`, v2 control `vezocontrol`, tokens in `.env` (gitignored).
+  Principal's Metaculus account `Enhso`; personal token in `.env` for the
+  read-only history backfill.
+- **No Oracle (no credit card). Host = GitHub Actions, hardened** (deviation from
+  spec s7, approved by Hatim as the fallback). This laptop is not always-on
+  (uptime < 1 h at check), so it is not a host. The repo is public, so Actions
+  minutes are unlimited. Design (chunk C4a):
+  - one long-running job per ~5.5 h "shift" that polls every few minutes and
+    runs the full pipeline plus iw-server inside the job; at shift end it stops
+    claiming, drains, snapshots state, and dispatches its successor via
+    `workflow_dispatch` (GITHUB_TOKEN may trigger `workflow_dispatch`). No
+    dependence on cron timing.
+  - a `*/30` cron backstop that starts a shift only if none is running/queued.
+  - state (IW sqlite corpus, ledger, weights, outbox) persisted as an
+    **encrypted** snapshot (Fernet, `STATE_KEY` secret) in a GitHub Release asset,
+    after every completed question and every 15 min.
+  - daily weights + weekly digest run inside the shift loop (one state owner,
+    retry = next loop iteration), not as separate workflows.
+  - public repo means public logs: the host runs with redacted logging (question
+    ids and statuses only; never probabilities, rationales or claims before close).
+  - MiniBench windows are 3 h, so a start-up gap of minutes costs nothing.
+- **Two OpenRouter keys.** `OPENROUTER_API_KEY` (Metaculus-funded, allowed
+  providers openai/anthropic/google, 1000 free req/day) and
+  `OPENROUTER_FREE_API_KEY` (personal, free tier, **50 free req/day**). Routing:
+  paid models and Google `:free` models -> funded key; all other `:free` -> free key.
+  Free key verified 2026-09-22: nemotron-3-ultra, nemotron-3-super, nex-n2.5-pro,
+  dots-3-note OK; qwen3.8-27b and glm-5.2 "Provider returned error".
+- **Pool: as large as possible, reasoning effort high.** Paid: claude-fable-5.1,
+  gpt-6-astra, claude-opus-5.5, claude-sonnet-5, gpt-6-sol, gemini-3.1-pro-preview,
+  gemini-3.8-flash, gpt-6-luna. Free: gemma-4-31b-it (funded key) + the six free-key
+  models. The ledger's reliability data decides removals later.
+- **Budget pacing (replaces the earlier default).** Window = the two MiniBench
+  weeks, ending 2026-10-05T00:00Z (configurable). Daily budget = remaining credit
+  / days left in window, recomputed each UTC day. Spend today = funded key's
+  `usage_daily`. When spend runs ahead of the pro-rated daily budget, drop the
+  most expensive models first (by measured cost per call, priced estimate until
+  measured), progressively. Free-key models drop when its daily quota runs low.
+- Estimate at 2026-09-22: MiniBench opened 44 questions on day 1 of the round,
+  then ~1/hour (all open 3 h, resolve 1-4 Oct); main tournament 2 questions so
+  far. Assuming ~12k input + ~10k output tokens per forecast call at high effort,
+  a uniform draw from the full pool averages ~$0.13/call, ~$0.26/question; at
+  20-30 questions/day that is $5-8/day against a budget of ~$8/day. The guard
+  will bite on burst days (Fable and Astra, ~$0.60/call, drop first).
+- Referee re-research re-runs both forecasts: yes. Clamp [0.01, 0.99]: yes.
+  Digest as GitHub issue: yes. Prompt review: yes, after C3.
+- **v2 blocker found:** the Metaculus LLM proxy refuses `vezocontrol` ("You don't
+  have an allowance for model gpt-4o"). The unmodified template with the free key
+  would call `openrouter/openai/gpt-4o` (paid) and fail every question; with the
+  funded key it would spend ~$0.10/question from v1's budget. Decision pending.
+- IW has no GitHub remote yet; an Actions host must be able to fetch it.
+
 ---
 
 ## 4. Chunk log
