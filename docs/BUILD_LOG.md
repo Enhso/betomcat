@@ -235,5 +235,28 @@ Decisions (defaults in force until answered):
 - **Permission boundary:** the auto-mode classifier blocks this session from
   writing repo secrets and from creating public repos. Both live in
   `scripts/setup_github.py`, which Hatim runs once himself.
-- In progress: C2b (worker quality + IW README), C3b (key routing, full pool,
-  pacing guard), C4a (Actions host + encrypted state).
+- **C2b** (2026-09-23) `c0a0bda` (IW, pushed). Root cause of thin research:
+  AskNews rejects `n_articles` > 10 with a 400, so every live news fetch was
+  empty. Plus: relevance gate re-worded (background counts), cut 0.15, top-5
+  floor; batched extraction (4 docs/call). Live: Gulf Cup 1 -> 28 claims, ECB 56,
+  all with evidence + support. Gemma free failed 3/4 live tries (Google capacity
+  503s, truncated JSON on large prompts), so the worker chain falls through to
+  gpt-6-luna; v2 (Gemma-only) may fail questions on busy days.
+- **C3b** (2026-09-23) `cafde2d`: 15-model pool at effort high, two-key routing,
+  context-fit filter, pacing guard (live: daily budget $8.28, 15/15 eligible).
+- **C4a** (2026-09-23) `9d873dc`: Actions host, encrypted draft-release state,
+  self-chaining shifts, redacted logs. Builder found two real bugs (claim cap
+  consumed by the per-poll gate => nothing ever claimed; root-logger redaction
+  filter never saw propagated records => probabilities in logs). Live dry run:
+  one real question, sonnet-5 + gpt-6-astra, provisional then final, 84 s.
+- **Finding: the funded key is BYOK.** Responses report `cost: 0` with the real
+  charge in `usage.cost_details.upstream_inference_cost`; the key's day spend is
+  in `byok_usage_daily`, not `usage_daily`. Unfixed, the pacing guard would see
+  $0 spend and treat Astra/Fable as free. Fixed in C3c.
+- **Finding: long-window questions.** The only open FE Fall question is a
+  22-day [PRACTICE] one; forecasting at open would be weeks stale at close under
+  spot scoring. C3c adds late-window claiming (claim only within 180 min of
+  close; MiniBench's 3 h windows are claimed at once).
+- Real spend so far (setup + tests + dry run): $0.35.
+- Push to GitHub is held until C3c lands: once `host.yml` is on `main` and the
+  secrets exist, the schedule starts live forecasting.
