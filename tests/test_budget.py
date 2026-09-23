@@ -126,6 +126,28 @@ def test_estimate_cost_free_model_with_no_price_is_zero(ledger: Ledger) -> None:
     assert estimate_cost(model, ledger) == 0.0
 
 
+def test_estimate_cost_ignores_legacy_zero_rows_for_a_priced_model(
+    ledger: Ledger,
+) -> None:
+    # Legacy rows recorded 0 for every BYOK call before the llm.py cost fix.
+    for cost in [0.0, 0.0, 0.30, 0.0, 0.20]:
+        _record_ok_cost(ledger, "model-a", cost)
+    model = _model("model-a", price_in=999, price_out=999)
+
+    assert estimate_cost(model, ledger) == pytest.approx(0.25)
+
+
+def test_estimate_cost_falls_back_to_price_when_all_recent_costs_are_legacy_zero(
+    ledger: Ledger,
+) -> None:
+    for cost in [0.0, 0.0, 0.0]:
+        _record_ok_cost(ledger, "model-a", cost)
+    model = _model("model-a", price_in=2.0, price_out=10.0)
+
+    expected = (2.0 * 12_000 + 10.0 * 10_000) / 1_000_000
+    assert estimate_cost(model, ledger) == pytest.approx(expected)
+
+
 # -- compute_daily_budget / compute_pace ---------------------------------------
 
 
@@ -167,6 +189,127 @@ def test_compute_pace_midday() -> None:
     pace = compute_pace(usage_daily=5.0, daily_budget=10.0, now=now)
 
     assert pace == pytest.approx(1.0)
+
+
+# -- KeyStatus.today_spend (BYOK, C3c) -----------------------------------------
+
+
+def test_today_spend_adds_byok_usage_when_included_in_limit() -> None:
+    status = KeyStatus(
+        usage_daily=0.0,
+        byok_usage_daily=0.3468,
+        include_byok_in_limit=True,
+    )
+
+    assert status.today_spend == pytest.approx(0.3468)
+
+
+def test_today_spend_ignores_byok_usage_when_not_included_in_limit() -> None:
+    status = KeyStatus(
+        usage_daily=0.1,
+        byok_usage_daily=0.3468,
+        include_byok_in_limit=False,
+    )
+
+    assert status.today_spend == pytest.approx(0.1)
+
+
+def test_today_spend_tolerates_missing_byok_fields() -> None:
+    status = KeyStatus(usage_daily=0.1)
+
+    assert status.today_spend == pytest.approx(0.1)
+
+
+def test_today_spend_is_none_when_usage_daily_missing() -> None:
+    status = KeyStatus(byok_usage_daily=0.5, include_byok_in_limit=True)
+
+    assert status.today_spend is None
+
+
+async def test_fetch_key_status_parses_byok_fields(httpx_mock: HTTPXMock) -> None:
+    # Verified live 2026-09-23: the funded (BYOK) key's GET /api/v1/key.
+    httpx_mock.add_response(
+        url=KEY_STATUS_URL,
+        json={
+            "data": {
+                "limit_remaining": 42.5,
+                "usage_daily": 0.0,
+                "byok_usage_daily": 0.3468,
+                "include_byok_in_limit": True,
+            }
+        },
+    )
+    async with httpx.AsyncClient() as client:
+        status = await fetch_key_status(client, "some-key")
+
+    assert status.ok is True
+    assert status.byok_usage_daily == pytest.approx(0.3468)
+    assert status.include_byok_in_limit is True
+    assert status.today_spend == pytest.approx(0.3468)
+
+
+async def test_fetch_key_status_tolerates_missing_byok_fields(
+    httpx_mock: HTTPXMock,
+) -> None:
+    httpx_mock.add_response(
+        url=KEY_STATUS_URL,
+        json={"data": {"limit_remaining": 42.5, "usage_daily": 1.0}},
+    )
+    async with httpx.AsyncClient() as client:
+        status = await fetch_key_status(client, "some-key")
+
+    assert status.ok is True
+    assert status.byok_usage_daily is None
+    assert status.include_byok_in_limit is None
+    assert status.today_spend == pytest.approx(1.0)
+
+
+def test_select_eligible_byok_usage_pushes_pace_into_harsher_band(
+    ledger: Ledger,
+) -> None:
+    """A funded (BYOK) key with usage_daily=0 but real spend in
+    byok_usage_daily must still drive pacing -- otherwise expensive models
+    look free and are never dropped."""
+    medium = _model("medium", price_in=2, price_out=10)  # est cost 0.124
+    cheap1 = _model("cheap1")  # padding
+    cheap2 = _model("cheap2")  # padding
+    funded = KeyStatus(
+        ok=True,
+        limit_remaining=11.0,
+        usage_daily=0.0,
+        byok_usage_daily=1.0,
+        include_byok_in_limit=True,
+    )
+    late = datetime(2026, 9, 23, 23, 45, 0, tzinfo=UTC)
+
+    result = select_eligible(
+        [medium, cheap1, cheap2], funded, KeyStatus(ok=False), ledger, WINDOW_END, late
+    )
+
+    assert result.pace is not None and result.pace > 1.0
+    assert result.excluded_ids == ["medium"]
+
+
+def test_select_eligible_byok_usage_ignored_when_not_included_in_limit(
+    ledger: Ledger,
+) -> None:
+    medium = _model("medium", price_in=2, price_out=10)  # est cost 0.124
+    cheap1 = _model("cheap1")
+    cheap2 = _model("cheap2")
+    funded = KeyStatus(
+        ok=True,
+        limit_remaining=11.0,
+        usage_daily=0.0,
+        byok_usage_daily=1.0,
+        include_byok_in_limit=False,
+    )
+
+    result = select_eligible(
+        [medium, cheap1, cheap2], funded, KeyStatus(ok=False), ledger, WINDOW_END, NOON
+    )
+
+    assert result.pace == pytest.approx(0.0)
+    assert result.excluded_ids == []
 
 
 # -- select_eligible: pacing bands ---------------------------------------------

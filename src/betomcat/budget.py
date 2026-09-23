@@ -69,12 +69,19 @@ def estimate_cost(model: ModelSpec, ledger: Ledger) -> float:
     Prefers the median of its last 10 successful ledger calls (empirical);
     falls back to a price-based estimate at 12k input + 10k output tokens
     (spec s5's own working estimate) when no history exists yet.
+
+    For a model with a non-zero price, a recorded cost of exactly 0 is
+    ignored: it's a legacy row from before the BYOK cost fix (llm.py) rather
+    than a genuinely free call. A model with no configured price (a real
+    free model) keeps its zero-cost history as-is.
     """
     recent = ledger.get_recent_costs(model.id, limit=10)
-    if recent:
-        return statistics.median(recent)
     price_in = model.price_in or 0.0
     price_out = model.price_out or 0.0
+    if price_in or price_out:
+        recent = [cost for cost in recent if cost != 0.0]
+    if recent:
+        return statistics.median(recent)
     return (
         price_in * DEFAULT_INPUT_TOKENS + price_out * DEFAULT_OUTPUT_TOKENS
     ) / 1_000_000
@@ -87,12 +94,29 @@ class KeyStatus:
     `ok=False` means the status could not be read (network error, non-2xx,
     or a malformed body) -- callers must fail open and skip any exclusion
     gated on the missing field(s).
+
+    `usage_daily` is 0 for a BYOK key (the funded key): its real day spend
+    is in `byok_usage_daily`, only counted when `include_byok_in_limit` is
+    true (`limit_remaining` is then already net of it -- verified live
+    2026-09-23). `today_spend` combines the two for every caller that needs
+    "how much has this key spent today".
     """
 
     ok: bool = True
     limit_remaining: float | None = None
     usage_daily: float | None = None
     free_daily_requests_remaining: int | None = None
+    byok_usage_daily: float | None = None
+    include_byok_in_limit: bool | None = None
+
+    @property
+    def today_spend(self) -> float | None:
+        """`usage_daily` plus BYOK spend, when that spend counts toward the limit."""
+        if self.usage_daily is None:
+            return None
+        if self.include_byok_in_limit and self.byok_usage_daily is not None:
+            return self.usage_daily + self.byok_usage_daily
+        return self.usage_daily
 
 
 async def fetch_key_status(client: httpx.AsyncClient, api_key: str) -> KeyStatus:
@@ -113,12 +137,20 @@ async def fetch_key_status(client: httpx.AsyncClient, api_key: str) -> KeyStatus
     try:
         limit_remaining = data.get("limit_remaining")
         usage_daily = data.get("usage_daily")
+        byok_usage_daily = data.get("byok_usage_daily")
+        include_byok_in_limit = data.get("include_byok_in_limit")
         remaining = (data.get("free_model_daily_requests") or {}).get("remaining")
         return KeyStatus(
             limit_remaining=None if limit_remaining is None else float(limit_remaining),
             usage_daily=None if usage_daily is None else float(usage_daily),
             free_daily_requests_remaining=(
                 None if remaining is None else int(remaining)
+            ),
+            byok_usage_daily=(
+                None if byok_usage_daily is None else float(byok_usage_daily)
+            ),
+            include_byok_in_limit=(
+                None if include_byok_in_limit is None else bool(include_byok_in_limit)
             ),
         )
     except (TypeError, ValueError, AttributeError) as exc:
@@ -220,7 +252,8 @@ def select_eligible(
         and funded_status.usage_daily is not None
     ):
         limit_remaining = funded_status.limit_remaining
-        usage_daily = funded_status.usage_daily
+        usage_daily = funded_status.today_spend
+        assert usage_daily is not None  # guarded by the `usage_daily is not None` check
         daily_budget = compute_daily_budget(
             limit_remaining, usage_daily, window_end, now
         )

@@ -4,6 +4,11 @@ Sends `usage: {"include": true}` so every response carries `usage.cost` in
 USD, which is how the bot tracks spend against the $100 OpenRouter budget
 (brief s2). Timeouts are supplied by the caller (the pipeline's deadline
 ladder owns pacing, not this client).
+
+The Metaculus-funded key is billed as BYOK: those responses report
+`usage.cost` as 0, with the real per-call charge in
+`usage.cost_details.upstream_inference_cost` (verified live 2026-09-23).
+`complete` adds that back in so `LLMResult.cost_usd` reflects true spend.
 """
 
 from __future__ import annotations
@@ -111,9 +116,15 @@ class OpenRouterClient:
             raise LLMError(f"{model.id}: empty completion content")
 
         usage = data.get("usage") or {}
+        cost_usd = float(usage.get("cost", 0.0) or 0.0)
+        if usage.get("is_byok"):
+            cost_details = usage.get("cost_details") or {}
+            upstream_cost = cost_details.get("upstream_inference_cost")
+            if upstream_cost is not None:
+                cost_usd += float(upstream_cost)
         return LLMResult(
             text=text,
-            cost_usd=float(usage.get("cost", 0.0) or 0.0),
+            cost_usd=cost_usd,
             tokens_in=int(usage.get("prompt_tokens", 0) or 0),
             tokens_out=int(usage.get("completion_tokens", 0) or 0),
         )

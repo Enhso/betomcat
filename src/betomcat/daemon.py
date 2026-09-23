@@ -4,6 +4,13 @@ Runs forever, polling every `Settings.poll_seconds`. One question's pipeline
 exception never kills the loop (`run_pipeline` already catches and records
 `failed` internally; this loop's own try/except is a second backstop). Shuts
 down cleanly on SIGTERM/SIGINT.
+
+Spot scoring only counts the last forecast before close, and the bot
+forecasts each question once, so a long-window question must not be claimed
+at open -- it would be weeks stale at close. `run_daemon` only claims a
+question once it's within `LATE_WINDOW_MINUTES` of its scheduled close (env,
+default 180); MiniBench's 3h windows are claimed right away. A question
+claimed too early is simply reconsidered on a later poll -- no state needed.
 """
 
 from __future__ import annotations
@@ -11,15 +18,27 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from forecasting_tools.data_models.questions import MetaculusQuestion
 
 from betomcat.pipeline import PipelineDeps, PipelineOutcome, run_pipeline
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LATE_WINDOW_MINUTES = 180
+
+
+def _late_window_minutes() -> int:
+    """`LATE_WINDOW_MINUTES` env var, or `DEFAULT_LATE_WINDOW_MINUTES`."""
+    raw = os.environ.get("LATE_WINDOW_MINUTES")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_LATE_WINDOW_MINUTES
+    return int(raw)
 
 
 @dataclass
@@ -45,6 +64,8 @@ class DaemonHooks:
         install_signal_handlers: Whether to install SIGTERM/SIGINT handlers
             on `stop_event`. A given signal can only have one handler per
             event loop, so a caller installing its own must pass `False`.
+        now: Clock used for the late-window claim check. Injectable for
+            tests; defaults to the real UTC clock.
     """
 
     stop_event: asyncio.Event | None = None
@@ -52,6 +73,7 @@ class DaemonHooks:
     on_question_done: Callable[[str, PipelineOutcome], Awaitable[None]] | None = None
     drain_timeout: float | None = None
     install_signal_handlers: bool = True
+    now: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 
 async def _forecast_one(
@@ -96,6 +118,7 @@ async def run_daemon(
     """
     hooks = hooks or DaemonHooks()
     stop_event = hooks.stop_event if hooks.stop_event is not None else asyncio.Event()
+    late_window_minutes = _late_window_minutes()
 
     if hooks.install_signal_handlers:
         loop = asyncio.get_running_loop()
@@ -108,6 +131,7 @@ async def run_daemon(
     in_flight: set[asyncio.Task[None]] = set()
 
     while not stop_event.is_set():
+        deferred = 0
         for tournament in tournaments:
             try:
                 questions = await deps.metaculus.list_open_questions(tournament)
@@ -116,6 +140,24 @@ async def run_daemon(
                 continue
 
             for question in questions:
+                # The late-window check comes before `should_claim` so a
+                # question that isn't claimable yet never consumes a claim
+                # slot from a caller enforcing a cap (host.py's
+                # --max-questions) -- the same failure mode as the
+                # should_claim double-count this loop already guards
+                # against below.
+                close_time = question.close_time
+                if close_time is None:
+                    logger.info(
+                        "question %s has no close time; skipping",
+                        question.id_of_question,
+                    )
+                    continue
+                minutes_to_close = (close_time - hooks.now()).total_seconds() / 60.0
+                if minutes_to_close > late_window_minutes:
+                    deferred += 1
+                    continue
+
                 # `should_claim` is called exactly once per question actually
                 # considered for claiming -- a caller enforcing a claim cap
                 # (e.g. host.py's --max-questions) counts True results, so
@@ -136,7 +178,11 @@ async def run_daemon(
                 task.add_done_callback(in_flight.discard)
 
         logger.info(
-            "heartbeat: poll complete, %d question(s) in flight", len(in_flight)
+            "heartbeat: poll complete, %d question(s) in flight, "
+            "%d open question(s) deferred (outside the %d-minute late window)",
+            len(in_flight),
+            deferred,
+            late_window_minutes,
         )
 
         with contextlib.suppress(TimeoutError):

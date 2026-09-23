@@ -101,6 +101,93 @@ async def test_complete_defaults_cost_to_zero_when_missing(
     assert result.tokens_out == 0
 
 
+# -- BYOK cost parsing (C3c) ---------------------------------------------------
+
+
+async def test_complete_adds_upstream_inference_cost_for_byok(
+    httpx_mock: HTTPXMock, client: OpenRouterClient
+) -> None:
+    # Verified live 2026-09-23: the funded key is BYOK, so `usage.cost` is 0
+    # and the real charge sits in `cost_details.upstream_inference_cost`.
+    httpx_mock.add_response(
+        url=OPENROUTER_URL,
+        json={
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 17,
+                "cost": 0,
+                "is_byok": True,
+                "cost_details": {
+                    "upstream_inference_cost": 9.6e-06,
+                    "upstream_inference_prompt_cost": 1.1e-06,
+                    "upstream_inference_completions_cost": 8.5e-06,
+                },
+            },
+        },
+    )
+
+    result = await client.complete(MODEL, "prompt", timeout=10.0)
+
+    assert result.cost_usd == pytest.approx(9.6e-06)
+
+
+async def test_complete_byok_sums_cost_and_upstream_cost(
+    httpx_mock: HTTPXMock, client: OpenRouterClient
+) -> None:
+    httpx_mock.add_response(
+        url=OPENROUTER_URL,
+        json={
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {
+                "cost": 0.001,
+                "is_byok": True,
+                "cost_details": {"upstream_inference_cost": 0.002},
+            },
+        },
+    )
+
+    result = await client.complete(MODEL, "prompt", timeout=10.0)
+
+    assert result.cost_usd == pytest.approx(0.003)
+
+
+async def test_complete_non_byok_does_not_add_upstream_cost(
+    httpx_mock: HTTPXMock, client: OpenRouterClient
+) -> None:
+    httpx_mock.add_response(
+        url=OPENROUTER_URL,
+        json={
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {
+                "cost": 0.0123,
+                "is_byok": False,
+                "cost_details": {"upstream_inference_cost": 9.6e-06},
+            },
+        },
+    )
+
+    result = await client.complete(MODEL, "prompt", timeout=10.0)
+
+    assert result.cost_usd == pytest.approx(0.0123)
+
+
+async def test_complete_byok_tolerates_missing_cost_details(
+    httpx_mock: HTTPXMock, client: OpenRouterClient
+) -> None:
+    httpx_mock.add_response(
+        url=OPENROUTER_URL,
+        json={
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {"cost": 0.0, "is_byok": True},
+        },
+    )
+
+    result = await client.complete(MODEL, "prompt", timeout=10.0)
+
+    assert result.cost_usd == 0.0
+
+
 # -- key routing (C3b) --------------------------------------------------------
 
 FREE_MODEL = ModelSpec(id="nex-agi/nex-n2.5-pro:free", tier="free", enabled=True)
