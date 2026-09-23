@@ -99,3 +99,75 @@ async def test_complete_defaults_cost_to_zero_when_missing(
     assert result.cost_usd == 0.0
     assert result.tokens_in == 0
     assert result.tokens_out == 0
+
+
+# -- key routing (C3b) --------------------------------------------------------
+
+FREE_MODEL = ModelSpec(id="nex-agi/nex-n2.5-pro:free", tier="free", enabled=True)
+GOOGLE_FREE_MODEL = ModelSpec(
+    id="google/gemma-4-31b-it:free", tier="free", enabled=True
+)
+
+
+async def _ok_response(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        url=OPENROUTER_URL,
+        json={"choices": [{"message": {"content": "ok"}}], "usage": {}},
+    )
+
+
+async def test_complete_uses_funded_key_when_no_free_key_configured(
+    httpx_mock: HTTPXMock,
+) -> None:
+    await _ok_response(httpx_mock)
+    async with httpx.AsyncClient() as http_client:
+        client = OpenRouterClient("funded-key", client=http_client)
+        await client.complete(FREE_MODEL, "prompt", timeout=10.0)
+
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer funded-key"
+
+
+async def test_complete_routes_free_model_to_free_key(httpx_mock: HTTPXMock) -> None:
+    await _ok_response(httpx_mock)
+    async with httpx.AsyncClient() as http_client:
+        client = OpenRouterClient("funded-key", "free-key", client=http_client)
+        await client.complete(FREE_MODEL, "prompt", timeout=10.0)
+
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer free-key"
+
+
+async def test_complete_routes_google_free_model_to_funded_key(
+    httpx_mock: HTTPXMock,
+) -> None:
+    await _ok_response(httpx_mock)
+    async with httpx.AsyncClient() as http_client:
+        client = OpenRouterClient("funded-key", "free-key", client=http_client)
+        await client.complete(GOOGLE_FREE_MODEL, "prompt", timeout=10.0)
+
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer funded-key"
+
+
+async def test_complete_routes_paid_model_to_funded_key(httpx_mock: HTTPXMock) -> None:
+    await _ok_response(httpx_mock)
+    async with httpx.AsyncClient() as http_client:
+        client = OpenRouterClient("funded-key", "free-key", client=http_client)
+        await client.complete(MODEL, "prompt", timeout=10.0)
+
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer funded-key"
+
+
+async def test_complete_respects_explicit_key_override(httpx_mock: HTTPXMock) -> None:
+    forced_free = ModelSpec(
+        id="anthropic/claude-sonnet-5", tier="frontier", enabled=True, key="free"
+    )
+    await _ok_response(httpx_mock)
+    async with httpx.AsyncClient() as http_client:
+        client = OpenRouterClient("funded-key", "free-key", client=http_client)
+        await client.complete(forced_free, "prompt", timeout=10.0)
+
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer free-key"

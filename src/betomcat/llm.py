@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from betomcat.pool import ModelSpec
+from betomcat.pool import ModelSpec, effective_key
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -32,18 +32,32 @@ class LLMResult:
 class OpenRouterClient:
     """Thin async wrapper around OpenRouter's chat-completions endpoint."""
 
-    def __init__(self, api_key: str, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        free_api_key: str | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         """Args:
-        api_key: OpenRouter API key. Never logged.
+        api_key: Funded OpenRouter API key. Never logged.
+        free_api_key: Personal free-tier OpenRouter key, used for pool
+            entries that route to it (`pool.effective_key`). Never logged.
+            When absent, every call falls back to `api_key`.
         client: Optional pre-built `httpx.AsyncClient` (tests inject one).
         """
         self._api_key = api_key
+        self._free_api_key = free_api_key
         self._client = client or httpx.AsyncClient()
         self._owns_client = client is None
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    def _select_api_key(self, model: ModelSpec) -> str:
+        if effective_key(model) == "free" and self._free_api_key:
+            return self._free_api_key
+        return self._api_key
 
     async def complete(
         self, model: ModelSpec, prompt: str, timeout: float
@@ -77,7 +91,7 @@ class OpenRouterClient:
             response = await self._client.post(
                 OPENROUTER_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers={"Authorization": f"Bearer {self._select_api_key(model)}"},
                 timeout=timeout,
             )
         except httpx.HTTPError as exc:

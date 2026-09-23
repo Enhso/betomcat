@@ -33,6 +33,7 @@ from forecasting_tools.data_models.questions import (
 )
 
 from betomcat import reconcile
+from betomcat.budget import BudgetGuard
 from betomcat.comment import CommentState, ModelForecastInfo, render_comment
 from betomcat.forecast import (
     ForecastParseError,
@@ -47,7 +48,7 @@ from betomcat.forecast import (
 from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, OpenRouterClient
 from betomcat.metaculus import MetaculusWrapper
-from betomcat.pool import DrawResult, ModelSpec, load_pool, load_weights
+from betomcat.pool import DrawResult, ModelSpec, PoolConfig, load_pool, load_weights
 from betomcat.pool import draw as draw_pool
 from betomcat.research import (
     FamilyClassification,
@@ -89,6 +90,7 @@ class PipelineDeps:
     retry_backoff: float = 2.0
     per_call_timeout: float = 180.0
     poll_interval: float = 1.0
+    budget: BudgetGuard = field(default_factory=BudgetGuard)
 
 
 @dataclass(frozen=True)
@@ -347,6 +349,7 @@ async def _submit(
     research: ResearchResult,
     run_id: int,
     submission_kind: Literal["provisional", "final"],
+    pacing_note: str | None,
     deps: PipelineDeps,
 ) -> None:
     final_value: object
@@ -397,6 +400,7 @@ async def _submit(
             for mid in ordered_ids
         ],
         arithmetic=arithmetic,
+        pacing_note=pacing_note,
         referee_type=referee_type,
         history=research.history,
         claims=research.claims,
@@ -422,6 +426,7 @@ async def _run_model_ladder(
     run_id: int,
     soft_deadline: datetime,
     hard_deadline: datetime,
+    pacing_note: str | None,
     deps: PipelineDeps,
 ) -> RunStatus:
     tasks: dict[str, asyncio.Task[ModelResult | None]] = {
@@ -472,6 +477,7 @@ async def _run_model_ladder(
                 research=research,
                 run_id=run_id,
                 submission_kind="final",
+                pacing_note=pacing_note,
                 deps=deps,
             )
             submitted = "submitted"
@@ -490,6 +496,7 @@ async def _run_model_ladder(
                 research=research,
                 run_id=run_id,
                 submission_kind="provisional",
+                pacing_note=pacing_note,
                 deps=deps,
             )
             submitted = "provisional"
@@ -611,22 +618,40 @@ async def _run_pipeline_inner(
         )
         return PipelineOutcome("missed", run_id, "hard deadline hit during research")
 
+    prompt_fields = _build_prompt_fields(
+        question, research, kind, options, deps.clock()
+    )
+    prompt = render_prompt(kind, prompt_fields)
+
     pool = load_pool(deps.pool_path)
     weights = load_weights(deps.data_dir)
-    draw_result = draw_pool(pool, weights, deps.rng)
+
+    # Budget pacing (spec s5's draw runs unchanged; only the pool it sees is
+    # narrowed here, and pool_avg is computed over this eligible set).
+    pacing = await deps.budget.restrict(
+        pool.enabled_models, len(prompt), deps.ledger, deps.clock()
+    )
+    deps.ledger.record_pacing_decision(
+        run_id, pacing.pace, pacing.daily_budget, pacing.excluded_ids
+    )
+    pacing_note = (
+        f"Pool restricted by budget pacing: excluded {', '.join(pacing.excluded_ids)}"
+        if pacing.excluded_ids
+        else None
+    )
+    restricted_pool = PoolConfig(
+        ensemble_width=pool.ensemble_width, models=pacing.eligible
+    )
+
+    draw_result = draw_pool(restricted_pool, weights, deps.rng)
     deps.ledger.record_draw(
         run_id, draw_result.weights, draw_result.pool_avg, draw_result.fallback_fired
     )
     if draw_result.fallback_fired:
         deps.ledger.record_fallback(run_id, draw_result.models[0])
 
-    model_specs = {m.id: m for m in pool.models}
+    model_specs = {m.id: m for m in pacing.eligible}
     drawn_specs = [model_specs[mid] for mid in draw_result.models]
-
-    prompt_fields = _build_prompt_fields(
-        question, research, kind, options, deps.clock()
-    )
-    prompt = render_prompt(kind, prompt_fields)
 
     status = await _run_model_ladder(
         question=question,
@@ -641,6 +666,7 @@ async def _run_pipeline_inner(
         run_id=run_id,
         soft_deadline=soft_deadline,
         hard_deadline=hard_deadline,
+        pacing_note=pacing_note,
         deps=deps,
     )
 

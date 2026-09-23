@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import orjson
+import pytest
+
 from betomcat.ledger import Ledger
 
 
@@ -167,6 +170,76 @@ def test_ledger_as_context_manager(tmp_path: Path) -> None:
     with Ledger(tmp_path / "ledger.sqlite") as ledger:
         ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
         assert ledger.get_question("metaculus:1") is not None
+
+
+def test_pacing_decisions_round_trip(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+
+        ledger.record_pacing_decision(
+            run.id, pace=1.7, daily_budget=8.0, excluded_ids=["model-a", "model-b"]
+        )
+        ledger.record_pacing_decision(
+            run.id, pace=None, daily_budget=None, excluded_ids=[]
+        )
+
+        decisions = ledger.get_pacing_decisions(run.id)
+        assert len(decisions) == 2
+        assert decisions[0]["pace"] == pytest.approx(1.7)
+        assert decisions[0]["daily_budget"] == pytest.approx(8.0)
+        assert orjson.loads(decisions[0]["excluded_ids"]) == ["model-a", "model-b"]
+        assert decisions[1]["pace"] is None
+        assert orjson.loads(decisions[1]["excluded_ids"]) == []
+    finally:
+        ledger.close()
+
+
+def test_get_recent_costs_returns_ok_calls_newest_first(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+
+        for i, cost in enumerate([0.10, 0.20, 0.30]):
+            ledger.record_model_forecast(
+                run.id,
+                "model-a",
+                attempt=1,
+                started_at="2026-09-22T19:00:00Z",
+                finished_at="2026-09-22T19:00:05Z",
+                status="ok",
+                forecast=0.5,
+                rationale=f"r{i}",
+                cost_usd=cost,
+                tokens_in=10,
+                tokens_out=5,
+                error=None,
+            )
+        # A failed call must not pollute the cost history.
+        ledger.record_model_forecast(
+            run.id,
+            "model-a",
+            attempt=2,
+            started_at="2026-09-22T19:00:00Z",
+            finished_at=None,
+            status="failed",
+            forecast=None,
+            rationale=None,
+            cost_usd=None,
+            tokens_in=None,
+            tokens_out=None,
+            error="timeout",
+        )
+
+        costs = ledger.get_recent_costs("model-a", limit=10)
+        assert costs == [0.30, 0.20, 0.10]
+
+        assert ledger.get_recent_costs("model-a", limit=2) == [0.30, 0.20]
+        assert ledger.get_recent_costs("model-unknown") == []
+    finally:
+        ledger.close()
 
 
 def test_ledger_persists_across_reopen(tmp_path: Path) -> None:

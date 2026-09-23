@@ -77,6 +77,15 @@ CREATE TABLE IF NOT EXISTS draw_fallbacks (
     first_model TEXT NOT NULL,
     occurred_at TIMESTAMP NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pacing_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    pace REAL,
+    daily_budget REAL,
+    excluded_ids TEXT NOT NULL,
+    recorded_at TIMESTAMP NOT NULL
+);
 """
 
 
@@ -234,6 +243,38 @@ class Ledger:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # -- budget pacing -------------------------------------------------------
+
+    def record_pacing_decision(
+        self,
+        run_id: int,
+        pace: float | None,
+        daily_budget: float | None,
+        excluded_ids: list[str],
+    ) -> None:
+        """One row per pacing check, recorded before every draw (`budget.py`)."""
+        self._conn.execute(
+            """
+            INSERT INTO pacing_decisions
+                (run_id, pace, daily_budget, excluded_ids, recorded_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                pace,
+                daily_budget,
+                orjson.dumps(excluded_ids).decode(),
+                _now_iso(),
+            ),
+        )
+        self._conn.commit()
+
+    def get_pacing_decisions(self, run_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM pacing_decisions WHERE run_id = ? ORDER BY id", (run_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- model forecasts ---------------------------------------------------
 
     def record_model_forecast(
@@ -295,6 +336,22 @@ class Ledger:
             (question_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_recent_costs(self, model_id: str, limit: int = 10) -> list[float]:
+        """Up to `limit` most recent successful `cost_usd` values for `model_id`.
+
+        Used by the budget guard's per-model cost estimate (`budget.py`).
+        """
+        rows = self._conn.execute(
+            """
+            SELECT cost_usd FROM model_forecasts
+            WHERE model_id = ? AND status = 'ok' AND cost_usd IS NOT NULL
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (model_id, limit),
+        ).fetchall()
+        return [float(row[0]) for row in rows]
 
     # -- submissions --------------------------------------------------------
 

@@ -11,6 +11,7 @@ from betomcat.pool import (
     ModelSpec,
     PoolConfig,
     draw,
+    effective_key,
     load_pool,
     load_weights,
     write_weights,
@@ -180,3 +181,94 @@ def test_draw_raises_when_pool_too_small() -> None:
 
     with pytest.raises(ValueError, match="Need 2 enabled models"):
         draw(pool, weights={}, rng=random.Random(0))
+
+
+def test_load_pool_parses_new_fields(tmp_path: Path) -> None:
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        """
+ensemble_width: 2
+models:
+  - id: anthropic/claude-sonnet-5
+    tier: frontier
+    enabled: true
+    key: funded
+    price_in: 2
+    price_out: 10
+    context_tokens: 1000000
+  - id: nex-agi/nex-n2.5-pro:free
+    tier: free
+    enabled: true
+    key: free
+    price_in: 0
+    price_out: 0
+    context_tokens: 262000
+"""
+    )
+
+    pool = load_pool(path)
+
+    funded = pool.models[0]
+    assert funded.key == "funded"
+    assert funded.price_in == 2.0
+    assert funded.price_out == 10.0
+    assert funded.context_tokens == 1000000
+
+    free = pool.models[1]
+    assert free.key == "free"
+    assert free.price_in == 0.0
+
+
+def test_load_pool_rejects_invalid_key(tmp_path: Path) -> None:
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        """
+ensemble_width: 2
+models:
+  - id: model-a
+    tier: frontier
+    enabled: true
+    key: bogus
+"""
+    )
+
+    with pytest.raises(ValueError, match="key must be 'funded' or 'free'"):
+        load_pool(path)
+
+
+def test_load_pool_missing_new_fields_default_to_none(tmp_path: Path) -> None:
+    path = tmp_path / "models.yaml"
+    path.write_text(MODELS_YAML)
+
+    pool = load_pool(path)
+
+    assert pool.models[0].key is None
+    assert pool.models[0].price_in is None
+    assert pool.models[0].context_tokens is None
+
+
+# -- effective_key (routing, C3b) --------------------------------------------
+
+
+def test_effective_key_explicit_override_wins() -> None:
+    model = ModelSpec("anthropic/claude-sonnet-5", "frontier", True, key="free")
+
+    assert effective_key(model) == "free"
+
+
+def test_effective_key_free_suffix_routes_to_free_key() -> None:
+    model = ModelSpec("nex-agi/nex-n2.5-pro:free", "free", True)
+
+    assert effective_key(model) == "free"
+
+
+def test_effective_key_google_free_stays_on_funded_key() -> None:
+    model = ModelSpec("google/gemma-4-31b-it:free", "free", True)
+
+    assert effective_key(model) == "funded"
+
+
+def test_effective_key_paid_model_defaults_to_funded() -> None:
+    model = ModelSpec("anthropic/claude-sonnet-5", "frontier", True)
+
+    assert effective_key(model) == "funded"

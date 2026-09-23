@@ -47,6 +47,7 @@ class CommentState:
     draw: DrawResult
     model_forecasts: list[ModelForecastInfo]
     arithmetic: str
+    pacing_note: str | None = None
     referee_type: str | None = None
     history: list[HistoryItem] = field(default_factory=list)
     claims: list[ClaimView] = field(default_factory=list)
@@ -84,6 +85,8 @@ def _build(
     lines.append(f"- Frozen weights: {weights_str}")
     lines.append(f"- Pool average: {state.draw.pool_avg:.4f}")
     lines.append(f"- Second-draw fallback fired: {state.draw.fallback_fired}")
+    if state.pacing_note:
+        lines.append(f"- {state.pacing_note}")
 
     lines.append("\n## Forecasts")
     for mf in state.model_forecasts:

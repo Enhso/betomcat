@@ -13,12 +13,14 @@ import logging
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import orjson
 import yaml
 
 logger = logging.getLogger(__name__)
+
+KeyChoice = Literal["funded", "free"]
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,26 @@ class ModelSpec:
     max_tokens: int | None = None
     reasoning: dict[str, Any] | None = None
     notes: str | None = None
+    key: KeyChoice | None = None
+    price_in: float | None = None
+    price_out: float | None = None
+    context_tokens: int | None = None
+
+
+def effective_key(model: ModelSpec) -> KeyChoice:
+    """Which OpenRouter key (funded or personal free-tier) serves this model.
+
+    An explicit `key:` in the pool YAML wins. Otherwise: `:free` ids route to
+    the free key, except `google/`-prefixed ones -- the funded key's
+    allowed-providers list includes google-ai-studio, so Google `:free`
+    models work there too and stay on the higher-quota funded key
+    (BUILD_LOG 2026-09-22 evening).
+    """
+    if model.key is not None:
+        return model.key
+    if model.id.endswith(":free") and not model.id.startswith("google/"):
+        return "free"
+    return "funded"
 
 
 @dataclass(frozen=True)
@@ -60,6 +82,20 @@ class DrawResult:
     fallback_fired: bool
 
 
+def _parse_key(raw_key: Any, model_id: str) -> KeyChoice | None:
+    if raw_key is None:
+        return None
+    if raw_key not in ("funded", "free"):
+        raise ValueError(
+            f"model {model_id}: key must be 'funded' or 'free', got {raw_key!r}"
+        )
+    return cast(KeyChoice, raw_key)
+
+
+def _float_or_none(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
 def load_pool(path: Path | str) -> PoolConfig:
     """Parse `config/models.yaml` into a `PoolConfig`.
 
@@ -79,6 +115,10 @@ def load_pool(path: Path | str) -> PoolConfig:
             max_tokens=entry.get("max_tokens"),
             reasoning=entry.get("reasoning"),
             notes=entry.get("notes"),
+            key=_parse_key(entry.get("key"), entry["id"]),
+            price_in=_float_or_none(entry.get("price_in")),
+            price_out=_float_or_none(entry.get("price_out")),
+            context_tokens=entry.get("context_tokens"),
         )
         for entry in raw.get("models", [])
     ]

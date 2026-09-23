@@ -212,3 +212,28 @@ Decisions (defaults in force until answered):
 ---
 
 ## 4. Chunk log
+
+- **C0** (2026-09-22) done: uv, `.env`, template workflows removed. `42a49a6`.
+- **C2** (2026-09-22) done by builder; live check found the AskNews wiki payload
+  is under `documents` (not `results`) and news text is `full_text`/`summary`;
+  fixed. Live run on a MiniBench question: pipeline works (58 s), but the
+  relevance gate dropped 17/20 docs incl. the tournament's own wiki page and
+  extraction gave 1 claim / 0 evidence -> chunk C2b.
+- **C1** (2026-09-23) builder ran out of session mid-clippy; finished here (one
+  `len_zero` lint). Findings: HNSW is rejected on TxTime relations, so vectors
+  sit in plain `claim_vec`/`evidence_vec` side relations; sqlite persistence and
+  version retention are tested. 104 Rust tests green. IW committed `8242992` and
+  pushed to private `Enhso/iw`.
+- **C3** (2026-09-23) verified and committed `e888097` (77 tests).
+- **v2 / vezocontrol** prepared at `../vezocontrol` (`1b1eda1`). Findings: the
+  template's pinned forecasting-tools 0.2.92 still targets FE *Summer* 2026, so
+  as-is v2 would only forecast MiniBench; bumping to 0.3.1 conflicts with the
+  optional review plugin, so the tournament id is pinned to 33121 instead. All
+  LLM purposes pinned to `openrouter/google/gemma-4-31b-it:free` on the funded
+  key (free, 1000 req/day; the personal free key's 50/day cannot carry the
+  template's ~11 calls per question).
+- **Permission boundary:** the auto-mode classifier blocks this session from
+  writing repo secrets and from creating public repos. Both live in
+  `scripts/setup_github.py`, which Hatim runs once himself.
+- In progress: C2b (worker quality + IW README), C3b (key routing, full pool,
+  pacing guard), C4a (Actions host + encrypted state).

@@ -15,14 +15,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import orjson
 import pytest
 import yaml
 from forecasting_tools.data_models.questions import BinaryQuestion
 
+from betomcat.budget import PacingResult
 from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, LLMResult
 from betomcat.pipeline import PipelineDeps, run_pipeline
-from betomcat.pool import DrawResult
+from betomcat.pool import DrawResult, ModelSpec
 from betomcat.research import FamilyClassification, ResearchResult
 
 POOL_MODELS = ["model-a", "model-b"]
@@ -112,6 +114,47 @@ def _write_pool(tmp_path: Path) -> Path:
         )
     )
     return path
+
+
+def _write_pool_three(tmp_path: Path) -> Path:
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "ensemble_width": 2,
+                "models": [
+                    {"id": "model-a", "tier": "frontier", "enabled": True},
+                    {"id": "model-b", "tier": "frontier", "enabled": True},
+                    {"id": "model-c", "tier": "frontier", "enabled": True},
+                ],
+            }
+        )
+    )
+    return path
+
+
+@dataclass
+class FakeBudgetGuard:
+    """Always excludes `excluded_id`, standing in for a live pacing verdict."""
+
+    excluded_id: str
+    pace: float = 1.5
+    daily_budget: float = 8.0
+
+    async def restrict(
+        self,
+        models: list[ModelSpec],
+        prompt_chars: int,
+        ledger: Ledger,
+        now: object,
+    ) -> PacingResult:
+        eligible = [m for m in models if m.id != self.excluded_id]
+        return PacingResult(
+            eligible=eligible,
+            pace=self.pace,
+            daily_budget=self.daily_budget,
+            excluded_ids=[self.excluded_id],
+        )
 
 
 def _question(close_time: datetime) -> BinaryQuestion:
@@ -326,5 +369,47 @@ async def test_already_forecasted_question_is_skipped(tmp_path: Path) -> None:
 
         assert outcome.status == "skipped"
         assert metaculus.calls == []
+    finally:
+        ledger.close()
+
+
+async def test_budget_pacing_narrows_pool_before_draw(tmp_path: Path) -> None:
+    """A model excluded by the budget guard is never drawn, called, or
+    reconciled, and the exclusion is recorded in the ledger and comment."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)
+    clock = FakeClock(now)
+
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def script_b() -> LLMResult:
+        return await _ok("Probability: 40%")
+
+    async def script_c() -> LLMResult:
+        raise AssertionError("model-c was excluded by pacing and must not be called")
+
+    llm = ScriptedLLM({"model-a": script_a, "model-b": script_b, "model-c": script_c})
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        deps.pool_path = _write_pool_three(tmp_path)
+        deps.budget = FakeBudgetGuard(excluded_id="model-c")  # type: ignore[assignment]
+
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        assert outcome.status == "submitted"
+        assert "model-c" not in llm.calls
+        assert set(llm.calls) == {"model-a", "model-b"}
+
+        pacing_decisions = ledger.get_pacing_decisions(outcome.run_id)
+        assert len(pacing_decisions) == 1
+        assert pacing_decisions[0]["pace"] == pytest.approx(1.5)
+        assert orjson.loads(pacing_decisions[0]["excluded_ids"]) == ["model-c"]
+
+        comment_calls = [c for c in metaculus.calls if c[0] == "post_comment"]
+        assert comment_calls
+        assert "budget pacing: excluded model-c" in comment_calls[-1][1]
     finally:
         ledger.close()
