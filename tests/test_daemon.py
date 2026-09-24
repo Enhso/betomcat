@@ -38,13 +38,19 @@ class FakeLedger:
         return question_id in self.runs
 
 
-def _question(qid: str, close_time: datetime | None = None) -> SimpleNamespace:
+def _question(
+    qid: str,
+    close_time: datetime | None = None,
+    question_text: str = "Will it happen?",
+) -> SimpleNamespace:
     # Default close time sits well inside the default 180-minute late
     # window, so tests unrelated to late-window claiming keep claiming
     # immediately without each having to set one.
     if close_time is None:
         close_time = datetime.now(UTC) + timedelta(minutes=30)
-    return SimpleNamespace(id_of_question=qid, close_time=close_time)
+    return SimpleNamespace(
+        id_of_question=qid, close_time=close_time, question_text=question_text
+    )
 
 
 def _deps(metaculus: FakeMetaculus, ledger: FakeLedger, tmp_path: Path) -> PipelineDeps:
@@ -347,7 +353,9 @@ async def test_questions_without_close_time_are_skipped_and_logged(
 
     monkeypatch.setattr(daemon_module, "run_pipeline", fake_run_pipeline)
 
-    no_close_time = SimpleNamespace(id_of_question="1", close_time=None)
+    no_close_time = SimpleNamespace(
+        id_of_question="1", close_time=None, question_text="Will it happen?"
+    )
     deps = _deps(FakeMetaculus(questions=[no_close_time]), FakeLedger(), tmp_path)
     stop_event = asyncio.Event()
 
@@ -460,3 +468,50 @@ async def test_deferred_question_is_claimed_once_it_enters_the_late_window(
 
     assert calls == ["1"]
     assert poll_count["n"] >= 2
+
+
+async def test_practice_question_is_never_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Hatim's 2026-09-24 decision: no forecasts on [PRACTICE] questions, even
+    inside the late window."""
+    calls: list[str] = []
+
+    async def fake_run_pipeline(question: Any, deps: PipelineDeps) -> PipelineOutcome:
+        calls.append(question.id_of_question)
+        return PipelineOutcome("submitted", 1)
+
+    monkeypatch.setattr(daemon_module, "run_pipeline", fake_run_pipeline)
+
+    practice = _question(
+        "1",
+        close_time=NOW + timedelta(minutes=30),
+        question_text='[PRACTICE] What will the average "new forecasters per day" be?',
+    )
+    real = _question("2", close_time=NOW + timedelta(minutes=30))
+    deps = _deps(FakeMetaculus(questions=[practice, real]), FakeLedger(), tmp_path)
+    stop_event = asyncio.Event()
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.05)
+        stop_event.set()
+
+    stopper = asyncio.create_task(stop_soon())
+    caplog.set_level(logging.INFO, logger=daemon_module.__name__)
+    await asyncio.wait_for(
+        run_daemon(
+            (1,),
+            deps,
+            poll_seconds=3600,
+            hooks=DaemonHooks(
+                stop_event=stop_event, now=lambda: NOW, install_signal_handlers=False
+            ),
+        ),
+        timeout=5,
+    )
+    await stopper
+
+    assert calls == ["2"]
+    assert "1 practice question(s) skipped" in caplog.text

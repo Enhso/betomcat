@@ -11,6 +11,8 @@ at open -- it would be weeks stale at close. `run_daemon` only claims a
 question once it's within `LATE_WINDOW_MINUTES` of its scheduled close (env,
 default 180); MiniBench's 3h windows are claimed right away. A question
 claimed too early is simply reconsidered on a later poll -- no state needed.
+
+[PRACTICE] questions are never forecast (Hatim, 2026-09-24).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from betomcat.pipeline import PipelineDeps, PipelineOutcome, run_pipeline
 logger = logging.getLogger(__name__)
 
 DEFAULT_LATE_WINDOW_MINUTES = 180
+PRACTICE_PREFIX = "[PRACTICE]"
 
 
 def _late_window_minutes() -> int:
@@ -132,6 +135,7 @@ async def run_daemon(
 
     while not stop_event.is_set():
         deferred = 0
+        practice = 0
         for tournament in tournaments:
             try:
                 questions = await deps.metaculus.list_open_questions(tournament)
@@ -140,6 +144,9 @@ async def run_daemon(
                 continue
 
             for question in questions:
+                if question.question_text.startswith(PRACTICE_PREFIX):
+                    practice += 1
+                    continue
                 # The late-window check comes before `should_claim` so a
                 # question that isn't claimable yet never consumes a claim
                 # slot from a caller enforcing a cap (host.py's
@@ -179,10 +186,12 @@ async def run_daemon(
 
         logger.info(
             "heartbeat: poll complete, %d question(s) in flight, "
-            "%d open question(s) deferred (outside the %d-minute late window)",
+            "%d open question(s) deferred (outside the %d-minute late window), "
+            "%d practice question(s) skipped",
             len(in_flight),
             deferred,
             late_window_minutes,
+            practice,
         )
 
         with contextlib.suppress(TimeoutError):

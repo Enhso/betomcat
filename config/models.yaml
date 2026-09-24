@@ -119,7 +119,8 @@ models:
     enabled: true
     key: funded
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 262000
@@ -131,7 +132,8 @@ models:
     enabled: true
     key: free
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 1000000
@@ -142,7 +144,8 @@ models:
     enabled: true
     key: free
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 262000
@@ -153,7 +156,8 @@ models:
     enabled: true
     key: free
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 262000
@@ -164,7 +168,8 @@ models:
     enabled: true
     key: free
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 512000
@@ -175,7 +180,8 @@ models:
     enabled: true
     key: free
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 262000
@@ -186,7 +192,8 @@ models:
     enabled: true
     key: free
     max_tokens: 4000
-    reasoning: null
+    reasoning:
+      effort: high
     price_in: 0
     price_out: 0
     context_tokens: 32000
