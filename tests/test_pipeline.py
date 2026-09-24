@@ -24,7 +24,7 @@ from betomcat.budget import PacingResult
 from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, LLMResult
 from betomcat.pipeline import PipelineDeps, run_pipeline
-from betomcat.pool import DrawResult, ModelSpec
+from betomcat.pool import DrawResult, ModelSpec, write_weights
 from betomcat.research import FamilyClassification, ResearchResult
 
 POOL_MODELS = ["model-a", "model-b"]
@@ -414,5 +414,218 @@ async def test_budget_pacing_narrows_pool_before_draw(tmp_path: Path) -> None:
         assert "budget pacing: excluded model-c" not in comment_calls[-1][1]
         submissions = ledger.get_submissions(outcome.run_id)
         assert "budget pacing: excluded model-c" in submissions[-1]["report"]
+    finally:
+        ledger.close()
+
+
+# -- replacement (a drawn model that gives up before soft gets a spare) -----
+
+
+async def test_failed_slot_is_replaced_by_spare_and_final_uses_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """model-c is drawn but fails every attempt; before soft it's replaced by
+    the untried spare model-a, whose weight comes from the draw-time weights
+    snapshot; the final submission reconciles the survivor (model-b) and the
+    replacement (model-a), and the ledger has one draw row per model tried."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)
+    clock = FakeClock(now)
+
+    fake_result = DrawResult(
+        models=["model-c", "model-b"],
+        weights={"model-c": 1.0, "model-b": 1.0},
+        pool_avg=1.0,
+        fallback_fired=False,
+    )
+    monkeypatch.setattr(
+        "betomcat.pipeline.draw_pool", lambda pool, weights, rng: fake_result
+    )
+
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 55%")
+
+    async def script_b() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def script_c() -> LLMResult:
+        raise LLMError("model-c is down")
+
+    llm = ScriptedLLM({"model-a": script_a, "model-b": script_b, "model-c": script_c})
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        deps.pool_path = _write_pool_three(tmp_path)
+        # The replacement's weight must come from this snapshot, taken at
+        # draw time -- not a value re-read later.
+        write_weights(
+            tmp_path,
+            weights={"model-a": 7.0},
+            n_resolved={},
+            updated_at="2026-09-22T00:00:00Z",
+        )
+
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        assert outcome.status == "submitted"
+        submissions = ledger.get_submissions(outcome.run_id)
+        # model-b succeeds immediately (provisional); model-c fails and is
+        # replaced by model-a, whose success completes the final.
+        assert [s["kind"] for s in submissions] == ["provisional", "final"]
+
+        draws = ledger.get_draws(outcome.run_id)
+        assert {d["model_id"] for d in draws} == {"model-a", "model-b", "model-c"}
+        assert len(draws) == 3
+        replacement_row = next(d for d in draws if d["model_id"] == "model-a")
+        assert replacement_row["weight"] == pytest.approx(7.0)
+
+        # Final reconciliation is the weighted average of model-b (0.65,
+        # weight 1.0) and model-a (0.55, weight 7.0 from the snapshot) --
+        # confirms the replacement's snapshot weight was actually used.
+        post_binary_calls = [c for c in metaculus.calls if c[0] == "post_binary"]
+        assert len(post_binary_calls) == 2
+        expected_final = (0.65 * 1.0 + 0.55 * 7.0) / 8.0
+        assert post_binary_calls[-1][1] == pytest.approx(expected_final)
+    finally:
+        ledger.close()
+
+
+async def test_replacement_stops_at_max_replacements_per_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the cap set to 1, only the first failed slot gets replaced even
+    though a second slot also fails and a second spare remains untried."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)
+    clock = FakeClock(now)
+    monkeypatch.setattr("betomcat.pipeline.MAX_REPLACEMENTS_PER_RUN", 1)
+
+    fake_result = DrawResult(
+        models=["model-c", "model-d"],
+        weights={"model-c": 1.0, "model-d": 1.0},
+        pool_avg=1.0,
+        fallback_fired=False,
+    )
+    monkeypatch.setattr(
+        "betomcat.pipeline.draw_pool", lambda pool, weights, rng: fake_result
+    )
+
+    async def fail() -> LLMResult:
+        raise LLMError("down")
+
+    async def script_ok() -> LLMResult:
+        return await _ok("Probability: 60%")
+
+    llm = ScriptedLLM(
+        {
+            "model-a": script_ok,
+            "model-b": script_ok,
+            "model-c": fail,
+            "model-d": fail,
+        }
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        # _deps's own _write_pool call already wrote this same path with its
+        # default 2-model pool; overwrite it here with the 4-model pool.
+        path = tmp_path / "models.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "ensemble_width": 2,
+                    "models": [
+                        {"id": "model-a", "tier": "frontier", "enabled": True},
+                        {"id": "model-b", "tier": "frontier", "enabled": True},
+                        {"id": "model-c", "tier": "frontier", "enabled": True},
+                        {"id": "model-d", "tier": "frontier", "enabled": True},
+                    ],
+                }
+            )
+        )
+        deps.pool_path = path
+
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        # Only one of the two failed slots got a replacement; the other
+        # never produces a result, so the run never reaches "all slots done".
+        assert outcome.status == "provisional"
+        draws = ledger.get_draws(outcome.run_id)
+        assert len(draws) == 3
+        assert {d["model_id"] for d in draws} == {"model-c", "model-d", "model-b"}
+        assert "model-a" not in llm.calls
+    finally:
+        ledger.close()
+
+
+async def test_no_replacement_after_soft_deadline(tmp_path: Path) -> None:
+    """A slot model that only fails once the clock has already crossed soft
+    gets the existing duplicate-attempt path, never a replacement -- the
+    spare is left untouched.
+
+    With `_write_pool_three` and the default seeded rng (unmonkeypatched
+    draw), the real draw picks model-c and model-b, leaving model-a as the
+    untried spare (verified directly against `pool.draw`)."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)  # soft at +30s, hard at +35s
+    clock = FakeClock(now)
+    release_b = clock.release_at(now + timedelta(seconds=31))
+
+    async def script_c() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def script_b() -> LLMResult:
+        await release_b.wait()
+        raise LLMError("down, and only fails once past soft")
+
+    async def script_a() -> LLMResult:
+        raise AssertionError("model-a is a spare and must never be called")
+
+    llm = ScriptedLLM({"model-a": script_a, "model-b": script_b, "model-c": script_c})
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        deps.pool_path = _write_pool_three(tmp_path)
+
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        assert outcome.status == "provisional"
+        assert "model-a" not in llm.calls
+        draws = ledger.get_draws(outcome.run_id)
+        assert {d["model_id"] for d in draws} == {"model-c", "model-b"}
+    finally:
+        ledger.close()
+
+
+async def test_no_spares_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """With a 2-model pool at width 2 there are no spares; a failing model
+    gets only the pre-existing retry/duplicate handling, and the provisional
+    result stands -- unchanged from the pre-replacement behaviour."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)
+    clock = FakeClock(now)
+
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def script_b() -> LLMResult:
+        raise LLMError("model-b is always down")
+
+    llm = ScriptedLLM({"model-a": script_a, "model-b": script_b})
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)  # _write_pool: a, b only
+
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        assert outcome.status == "provisional"
+        draws = ledger.get_draws(outcome.run_id)
+        assert {d["model_id"] for d in draws} == {"model-a", "model-b"}
+        submissions = ledger.get_submissions(outcome.run_id)
+        assert [s["kind"] for s in submissions] == ["provisional"]
     finally:
         ledger.close()

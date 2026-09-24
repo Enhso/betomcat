@@ -18,7 +18,7 @@ import asyncio
 import logging
 import random
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
@@ -53,7 +53,15 @@ from betomcat.forecast import (
 from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, OpenRouterClient
 from betomcat.metaculus import MetaculusWrapper
-from betomcat.pool import DrawResult, ModelSpec, PoolConfig, load_pool, load_weights
+from betomcat.pool import (
+    DrawResult,
+    ModelSpec,
+    PoolConfig,
+    draw_replacement,
+    effective_weight,
+    load_pool,
+    load_weights,
+)
 from betomcat.pool import draw as draw_pool
 from betomcat.research import (
     FamilyClassification,
@@ -66,6 +74,12 @@ from betomcat.research import (
 logger = logging.getLogger(__name__)
 
 RunStatus = Literal["submitted", "provisional", "missed", "failed", "skipped"]
+
+# A drawn model that gives up (exhausts its attempt loop with no result)
+# before the soft deadline gets substituted by a spare, up to this many
+# substitutions per run -- caps the worst case (an unlucky run of dead
+# models) rather than let replacement chase spares indefinitely.
+MAX_REPLACEMENTS_PER_RUN = 4
 
 
 async def default_referee(**kwargs: object) -> str | None:
@@ -423,6 +437,17 @@ async def _submit(
     )
 
 
+def _slot_draw_result(
+    draw_result: DrawResult, slots: list[ModelSpec], weights: dict[str, float]
+) -> DrawResult:
+    """`draw_result`, refreshed to reflect the current (possibly replaced) slots."""
+    return replace(
+        draw_result,
+        models=[m.id for m in slots],
+        weights={m.id: weights[m.id] for m in slots},
+    )
+
+
 async def _run_model_ladder(
     *,
     question: MetaculusQuestion,
@@ -438,8 +463,15 @@ async def _run_model_ladder(
     soft_deadline: datetime,
     hard_deadline: datetime,
     pacing_note: str | None,
+    spares: list[ModelSpec],
+    draw_weights: dict[str, float],
     deps: PipelineDeps,
 ) -> RunStatus:
+    slots: list[ModelSpec] = list(drawn)
+    weights = dict(weights)
+    untried_spares = list(spares)
+    replacements_used = 0
+
     tasks: dict[str, asyncio.Task[ModelResult | None]] = {
         model.id: asyncio.create_task(
             _model_attempt_loop(
@@ -475,15 +507,53 @@ async def _run_model_ladder(
         _collect(tasks)
         _collect(duplicate_tasks)
 
-        if len(results) == len(drawn):
-            ordered = [m.id for m in drawn]
+        now = deps.clock()
+
+        if now < soft_deadline:
+            for i in range(len(slots)):
+                if replacements_used >= MAX_REPLACEMENTS_PER_RUN or not untried_spares:
+                    break
+                slot = slots[i]
+                if tasks[slot.id].done() and slot.id not in results:
+                    replacement = draw_replacement(
+                        deps.rng, untried_spares, draw_weights
+                    )
+                    untried_spares.remove(replacement)
+                    weight = effective_weight(replacement.id, draw_weights)
+                    weights[replacement.id] = weight
+                    deps.ledger.record_draw(
+                        run_id, {replacement.id: weight}, draw_result.pool_avg, False
+                    )
+                    logger.info(
+                        "model %s gave up before soft deadline; replacing with %s",
+                        slot.id,
+                        replacement.id,
+                    )
+                    tasks[replacement.id] = asyncio.create_task(
+                        _model_attempt_loop(
+                            replacement,
+                            kind,
+                            options,
+                            prompt,
+                            question,
+                            run_id,
+                            soft_deadline,
+                            hard_deadline,
+                            deps,
+                        )
+                    )
+                    slots[i] = replacement
+                    replacements_used += 1
+
+        if all(slot.id in results for slot in slots):
+            ordered = [m.id for m in slots]
             await _submit(
                 question=question,
                 kind=kind,
                 results=results,
                 ordered_ids=ordered,
                 weights=weights,
-                draw_result=draw_result,
+                draw_result=_slot_draw_result(draw_result, slots, weights),
                 family=family,
                 research=research,
                 run_id=run_id,
@@ -502,7 +572,7 @@ async def _run_model_ladder(
                 results=results,
                 ordered_ids=ordered,
                 weights=weights,
-                draw_result=draw_result,
+                draw_result=_slot_draw_result(draw_result, slots, weights),
                 family=family,
                 research=research,
                 run_id=run_id,
@@ -512,7 +582,6 @@ async def _run_model_ladder(
             )
             submitted = "provisional"
 
-        now = deps.clock()
         if now >= hard_deadline:
             for task in [*tasks.values(), *duplicate_tasks.values()]:
                 if not task.done():
@@ -520,12 +589,12 @@ async def _run_model_ladder(
             break
 
         if now >= soft_deadline:
-            for model in drawn:
-                if model.id not in results and model.id not in duplicated:
-                    duplicated.add(model.id)
-                    duplicate_tasks[model.id] = asyncio.create_task(
+            for slot in slots:
+                if slot.id not in results and slot.id not in duplicated:
+                    duplicated.add(slot.id)
+                    duplicate_tasks[slot.id] = asyncio.create_task(
                         _single_attempt(
-                            model,
+                            slot,
                             kind,
                             options,
                             prompt,
@@ -663,6 +732,8 @@ async def _run_pipeline_inner(
 
     model_specs = {m.id: m for m in pacing.eligible}
     drawn_specs = [model_specs[mid] for mid in draw_result.models]
+    drawn_ids = set(draw_result.models)
+    spares = [m for m in pacing.eligible if m.id not in drawn_ids]
 
     status = await _run_model_ladder(
         question=question,
@@ -678,6 +749,8 @@ async def _run_pipeline_inner(
         soft_deadline=soft_deadline,
         hard_deadline=hard_deadline,
         pacing_note=pacing_note,
+        spares=spares,
+        draw_weights=weights,
         deps=deps,
     )
 

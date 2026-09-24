@@ -11,6 +11,7 @@ from betomcat.pool import (
     ModelSpec,
     PoolConfig,
     draw,
+    draw_replacement,
     effective_key,
     load_pool,
     load_weights,
@@ -181,6 +182,23 @@ def test_draw_raises_when_pool_too_small() -> None:
 
     with pytest.raises(ValueError, match="Need 2 enabled models"):
         draw(pool, weights={}, rng=random.Random(0))
+
+
+def test_draw_replacement_picks_by_weight() -> None:
+    candidates = [
+        ModelSpec("model-a", "frontier", True),
+        ModelSpec("model-b", "frontier", True),
+    ]
+
+    picked = draw_replacement(random.Random(0), candidates, weights={})
+
+    # Matches the underlying `_weighted_choice` walk for this seed/pool.
+    assert picked.id == "model-b"
+
+
+def test_draw_replacement_raises_on_empty_candidates() -> None:
+    with pytest.raises(ValueError, match="no replacement candidates"):
+        draw_replacement(random.Random(0), [], weights={})
 
 
 def test_load_pool_parses_new_fields(tmp_path: Path) -> None:

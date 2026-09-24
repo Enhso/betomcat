@@ -169,6 +169,32 @@ def _weighted_choice(
     return candidates[-1]
 
 
+def draw_replacement(
+    rng: random.Random, candidates: list[ModelSpec], weights: dict[str, float]
+) -> ModelSpec:
+    """Pick a mid-run replacement model (public wrapper over `_weighted_choice`).
+
+    Weighted-random over `candidates`, exactly like step 1 of `draw` -- no
+    pool-average constraint applies, since this isn't picking an ensemble,
+    just substituting one slot whose drawn model gave up.
+
+    Args:
+        rng: Injected RNG, for deterministic tests.
+        candidates: Untried, budget-eligible models available as spares.
+        weights: Model weights to draw against (the frozen snapshot from the
+            original draw -- never re-read live).
+
+    Returns:
+        The chosen replacement model.
+
+    Raises:
+        ValueError: If `candidates` is empty.
+    """
+    if not candidates:
+        raise ValueError("no replacement candidates available")
+    return _weighted_choice(rng, candidates, weights)
+
+
 def draw(
     pool: PoolConfig,
     weights: dict[str, float],
