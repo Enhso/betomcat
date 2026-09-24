@@ -14,6 +14,7 @@ from pytest_httpx import HTTPXMock
 
 from betomcat.host import (
     _dispatch_successor,
+    _iw_env,
     _MutableFlag,
     _RedactingFilter,
     _shift_margins,
@@ -181,3 +182,16 @@ def test_configure_host_logging_actually_redacts_through_real_logging_calls(
     assert not any("0.87" in m for m in messages)
     assert any(m.startswith("[redacted betomcat.metaculus message") for m in messages)
     assert "question metaculus:1 finished: status=submitted" in messages
+
+
+def test_iw_db_path_is_absolute_so_iw_and_snapshots_share_one_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Live bug 2026-09-24: with the default relative DATA_DIR, iw-server
+    (cwd = the IW checkout) wrote iw/data/iw.sqlite while snapshots read
+    ./data/iw.sqlite, so IW state was never persisted across shifts."""
+    monkeypatch.chdir(tmp_path)
+
+    env = _iw_env(Path("data"), "http://127.0.0.1:8080")
+
+    assert env["IW_DB_PATH"] == str(tmp_path / "data" / "iw.sqlite")

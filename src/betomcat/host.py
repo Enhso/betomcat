@@ -115,7 +115,9 @@ def _iw_env(data_dir: Path, iw_url: str) -> dict[str, str]:
     env.update(
         {
             "IW_DB_ENGINE": "sqlite",
-            "IW_DB_PATH": str(data_dir / "iw.sqlite"),
+            # Absolute: iw-server runs with cwd = the IW checkout, and snapshots
+            # read the same file relative to this process's cwd.
+            "IW_DB_PATH": str((data_dir / "iw.sqlite").resolve()),
             "IW_BIND": _iw_bind(iw_url),
             "IW_PYTHON_DIR": str(_iw_dir() / "python"),
             "RUST_LOG": "warn",

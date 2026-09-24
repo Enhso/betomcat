@@ -73,20 +73,33 @@ class GitHubReleases:
             await self._client.aclose()
 
     async def get_or_create_release(self) -> tuple[int, list[ReleaseAsset]]:
-        """The `state` release's id and assets, creating it (draft) if absent."""
+        """The `state` draft release's id and assets, creating it if absent.
+
+        A draft has no git tag until it is published, so `releases/tags/state`
+        never finds one; the release list does (drafts are listed for tokens
+        with push access). If several `state` drafts exist, uploads go to the
+        oldest and the uploaded assets of all of them are returned, so restore
+        and rotation see every snapshot.
+        """
         response = await self._client.get(
-            f"{GITHUB_API}/repos/{self._repo}/releases/tags/{RELEASE_TAG}",
+            f"{GITHUB_API}/repos/{self._repo}/releases",
             headers=self._headers,
+            params={"per_page": 100},
             timeout=30,
         )
-        if response.status_code == 200:
-            body = response.json()
+        response.raise_for_status()
+        matches = sorted(
+            (r for r in response.json() if r.get("tag_name") == RELEASE_TAG),
+            key=lambda r: int(r["id"]),
+        )
+        if matches:
             assets = [
-                ReleaseAsset(id=a["id"], name=a["name"]) for a in body.get("assets", [])
+                ReleaseAsset(id=a["id"], name=a["name"])
+                for release in matches
+                for a in release.get("assets", [])
+                if a.get("state") == "uploaded"
             ]
-            return int(body["id"]), assets
-        if response.status_code != 404:
-            response.raise_for_status()
+            return int(matches[0]["id"]), assets
 
         created = await self._client.post(
             f"{GITHUB_API}/repos/{self._repo}/releases",
