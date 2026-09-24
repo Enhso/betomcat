@@ -260,3 +260,69 @@ Decisions (defaults in force until answered):
 - Real spend so far (setup + tests + dry run): $0.35.
 - Push to GitHub is held until C3c lands: once `host.yml` is on `main` and the
   secrets exist, the schedule starts live forecasting.
+
+### 2026-09-24
+
+- **v2 Actions failures, root cause.** All 7 scheduled `vezocontrol` runs
+  (09-23 13:31 to 09-24 14:15) failed with 0 submissions. Every failure is a
+  Gemma 429, `GenerateContentInputTokensPerModelPerMinute-FreeTier`, limit
+  16,000. A live probe shows why: `:free` Gemma on the funded key goes through
+  a **BYOK Google AI Studio key on Google's free tier** (`is_byok: true`). The
+  template fires 5 forecasts at once (~26k chars of AskNews research, ~8k
+  tokens each) with one retry after 5-20 s, so at most 1-2 of 5 succeed and
+  the template needs 2.5. The quota is per Google key, so **v1's Gemma calls
+  (pool member and the IW worker chain) share it with v2.**
+- **v2 fix** (`dfbc07b`, pushed): `FreeTierPacedLlm` in `main.py` books each
+  call into a 60 s window capped at 12k estimated tokens (headroom for the
+  tiktoken estimate), first come first served. Unit tests in
+  `tests/test_free_tier_pacing.py` (pytest added to the dev group). The SDK's
+  `RefreshingBucketRateLimiter` does not fit (rejects calls above capacity; a
+  bucket sized for 10k-token calls caps throughput near 6k/min).
+- **Live check** (Q45516, publishing off): 0/35 calls hit a 429, but 20/35
+  failed with Google `500 INTERNAL` / `503 high demand` (OpenRouter 502/520),
+  often within 1 s. A direct probe reproduced it: 13-token prompts 2/2 ok,
+  6k-token prompts 1/3 ok. That is Google-side instability on large Gemma
+  prompts, independent of pacing, so forecast and parser calls get 5 tries.
+  One Gemma reply also came back truncated after one sentence (parser: "No JSON
+  found"); retries do not help that case.
+- **Also seen:** GitHub fired only 7 of ~75 scheduled v2 runs in 25 h (cron
+  every 20 min), gaps of 2.5-5 h against MiniBench's 3 h windows. Not fixed:
+  v2 is the template's own scheduling; v1 self-chains its shifts instead.
+- **Hatim's decisions:** prompts reviewed later by him (not over-engineered is
+  fine); free models run at `effort: high` like the paid ones; no forecasts on
+  [PRACTICE] questions (`c9a70af`). Same model at two efforts as separate
+  pool entries (Hatim left it to the lead): not now. It halves the resolved
+  questions behind each weight while MiniBench resolutions are scarce, a width-2
+  draw could pair a model with itself, and weights/ledger key on the model id.
+  Revisit if the budget guard should step a model down in effort instead of
+  dropping it.
+- Free-key models at effort high, one live probe each (max_tokens 4000):
+  nemotron-ultra, nemotron-super, nex-n2.5-pro, dots-3-note all `stop` with a
+  final line, 134-1,211 reasoning tokens. qwen3.8-27b and glm-5.2 returned
+  upstream 429s (unrelated to the param; same unreliability as 09-22).
+- Hatim's uncommitted `prompts/numeric.md` edit contains `$\Delta t$`, which
+  `string.Template` rejects (`test_render_prompt_numeric_fills_placeholders`
+  fails). Escape as `$$` before committing, or every numeric forecast fails.
+
+- **Short comments (Hatim, 2026-09-24: Metaculus penalizes long comments).**
+  v1 `37659c0`: each model writes a one-line `Summary:` (<= 60 words, appended
+  instruction in `forecast.py`, prompts untouched); the comment is a header plus
+  one bullet per model; the old audit layout is `render_report`, stored
+  untruncated in `submissions.report`. v2 `c045735` (pushed): posts a <= 100-word
+  rationale summarized by paced Gemma (reply under 20 words is retried once,
+  then the first reasoning is posted, capped); full reports go to a 90-day
+  workflow artifact. Gemma returned a 3-word reply once in live testing.
+- **v2 verified live:** manual run `36040878912` on `dfbc07b`: 5/5 predictions,
+  prediction and comment posted on Q45516, 0 rate-limit errors, 12.5 min.
+  MiniBench's "0 questions" is real (last one closed 09-24 02:49; openings are
+  irregular, not hourly).
+- **v1 dry run (Q43332, bot-testing-area), findings:** drew gemma-4-31b-it:free
+  and gemini-3.8-flash; both failed all 3 attempts in 12 s (Gemma 429: IW's
+  worker chain had just used the same Google quota; Flash 503 "high demand",
+  also via the BYOK Google AI Studio key, reproduced with a 5-token probe). The
+  ladder then idles until the soft deadline (close - 30 min) for one more try;
+  nothing substitutes a healthy model. Killed after 15 min by the probe's
+  timeout. Decisions pending with Hatim: replacement draw on model failure;
+  Gemma out of v1's pool and the IW worker chain.
+- gpt-6-luna live call billed `cost_usd` $0.0010 (BYOK upstream cost read
+  correctly, C3c).
