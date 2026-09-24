@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import orjson
@@ -157,11 +158,54 @@ def test_submissions_round_trip(tmp_path: Path) -> None:
         run = ledger.start_run("metaculus:1")
 
         ledger.record_submission(run.id, "provisional", 0.62, comment_posted=True)
-        ledger.record_submission(run.id, "final", 0.555, comment_posted=True)
+        ledger.record_submission(
+            run.id, "final", 0.555, comment_posted=True, report="# full audit report"
+        )
 
         submissions = ledger.get_submissions(run.id)
         assert [s["kind"] for s in submissions] == ["provisional", "final"]
         assert all(s["comment_posted"] == 1 for s in submissions)
+        # `report` defaults to None when omitted, and is stored verbatim otherwise.
+        assert submissions[0]["report"] is None
+        assert submissions[1]["report"] == "# full audit report"
+    finally:
+        ledger.close()
+
+
+def test_ledger_migrates_submissions_table_missing_report_column(
+    tmp_path: Path,
+) -> None:
+    """A DB created before the `report` column existed must be migrated in place."""
+    path = tmp_path / "ledger.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE questions (
+            question_id TEXT PRIMARY KEY, title TEXT, question_type TEXT,
+            close_time TIMESTAMP, url TEXT, created_at TIMESTAMP
+        );
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT,
+            status TEXT, family_id TEXT, degraded INTEGER, dossier_id TEXT,
+            started_at TIMESTAMP, finished_at TIMESTAMP
+        );
+        CREATE TABLE submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, kind TEXT,
+            forecast_json TEXT, comment_posted INTEGER, submitted_at TIMESTAMP
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    ledger = Ledger(path)
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        ledger.record_submission(run.id, "final", 0.5, comment_posted=True, report="r")
+
+        submissions = ledger.get_submissions(run.id)
+        assert submissions[0]["report"] == "r"
     finally:
         ledger.close()
 

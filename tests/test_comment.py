@@ -1,13 +1,14 @@
-"""Tests for private-comment rendering, including truncation (contracts.md s E)."""
+"""Tests for private-comment and audit-report rendering (contracts.md s E)."""
 
 from __future__ import annotations
 
 from betomcat.comment import (
-    MAX_COMMENT_CHARS,
+    COMMENT_MAX_CHARS,
     CommentState,
     ModelForecastInfo,
     format_value,
     render_comment,
+    render_report,
 )
 from betomcat.pool import DrawResult
 from betomcat.research import ClaimView, Evidence, HistoryItem
@@ -34,8 +35,18 @@ def _state(**overrides: object) -> CommentState:
         family_probability=0.83,
         draw=_draw(),
         model_forecasts=[
-            ModelForecastInfo("model-a", 0.62, "Reasoning A " * 5),
-            ModelForecastInfo("model-b", 0.48, "Reasoning B " * 5),
+            ModelForecastInfo(
+                "model-a",
+                0.62,
+                "Anchored on the ECB base rate. " * 2,
+                "Reasoning A " * 5,
+            ),
+            ModelForecastInfo(
+                "model-b",
+                0.48,
+                "Weighed recent inflation prints. " * 2,
+                "Reasoning B " * 5,
+            ),
         ],
         arithmetic="(0.62*1.10 + 0.48*0.95) / (1.10+0.95) = 0.555",
         referee_type=None,
@@ -60,10 +71,97 @@ def test_format_value_numeric() -> None:
     assert format_value([0.0, 0.5, 1.0]) == "cdf [3 pts]"
 
 
-def test_render_comment_includes_all_sections() -> None:
+# -- render_comment (the short, posted comment) ---------------------------
+
+
+def test_render_comment_header_and_bullets() -> None:
     state = _state()
 
     text = render_comment(state)
+
+    assert text.startswith("betomcat v1.0.0, final forecast")
+    assert "- **model-a** (62.00%): Anchored on the ECB base rate." in text
+    assert "- **model-b** (48.00%): Weighed recent inflation prints." in text
+    assert len(text) <= COMMENT_MAX_CHARS
+
+
+def test_render_comment_degraded_flag_in_header() -> None:
+    text = render_comment(_state(degraded=True))
+    assert text.startswith("betomcat v1.0.0, final forecast, degraded research")
+
+
+def test_render_comment_not_degraded_omits_flag() -> None:
+    text = render_comment(_state(degraded=False))
+    assert "degraded" not in text
+
+
+def test_render_comment_omits_value_for_numeric() -> None:
+    state = _state(
+        model_forecasts=[
+            ModelForecastInfo("model-a", [0.0, 0.5, 1.0], "A numeric summary.", "r"),
+        ]
+    )
+
+    text = render_comment(state)
+
+    assert "- **model-a**: A numeric summary." in text
+    assert "cdf" not in text
+
+
+def test_render_comment_excludes_report_only_sections() -> None:
+    """The short comment carries no family/draw/claims/rationale detail."""
+    history = [
+        HistoryItem(
+            id="metaculus:100",
+            kind="personal",
+            title="Will Y happen?",
+            url="https://metaculus.com/questions/100",
+            question_type="binary",
+            forecast=0.7,
+            resolution="yes",
+        )
+    ]
+    claims = [
+        ClaimView(
+            claim_id="c1",
+            text="Inflation is falling.",
+            kind="fact",
+            support=0.9,
+            support_method="jev",
+            dossier_id="dos:1",
+            evidence=[],
+        )
+    ]
+    text = render_comment(_state(history=history, claims=claims))
+
+    assert "ECB rate decisions" not in text
+    assert "Inflation is falling." not in text
+    assert "Will Y happen?" not in text
+    assert "Reasoning A" not in text
+    assert "## " not in text
+
+
+def test_render_comment_backstop_cap_holds_for_oversized_input() -> None:
+    huge_summary = "x" * 5000
+    state = _state(
+        model_forecasts=[
+            ModelForecastInfo(f"model-{i}", 0.5, huge_summary, "r") for i in range(3)
+        ]
+    )
+
+    text = render_comment(state)
+
+    assert len(text) == COMMENT_MAX_CHARS
+    assert text.endswith(" ...")
+
+
+# -- render_report (the full audit trail, kept for the ledger only) -------
+
+
+def test_render_report_includes_all_sections() -> None:
+    state = _state()
+
+    text = render_report(state)
 
     assert "betomcat v1.0.0 -- final forecast" in text
     assert "ECB rate decisions" in text
@@ -73,26 +171,26 @@ def test_render_comment_includes_all_sections() -> None:
     assert "0.555" in text  # arithmetic
     assert "Second-draw fallback fired: False" in text
     assert "## Rationales" in text
-    assert len(text) <= MAX_COMMENT_CHARS
+    assert "Reasoning A" in text
 
 
-def test_render_comment_degraded_flag() -> None:
-    text = render_comment(_state(degraded=True))
+def test_render_report_degraded_flag() -> None:
+    text = render_report(_state(degraded=True))
     assert "Degraded mode" in text
 
 
-def test_render_comment_referee_section() -> None:
-    text = render_comment(_state(referee_type="stale_info"))
+def test_render_report_referee_section() -> None:
+    text = render_report(_state(referee_type="stale_info"))
     assert "## Disagreement" in text
     assert "stale_info" in text
 
 
-def test_render_comment_no_referee_section_when_none() -> None:
-    text = render_comment(_state(referee_type=None))
+def test_render_report_no_referee_section_when_none() -> None:
+    text = render_report(_state(referee_type=None))
     assert "## Disagreement" not in text
 
 
-def test_render_comment_history_and_claims() -> None:
+def test_render_report_history_and_claims() -> None:
     history = [
         HistoryItem(
             id="metaculus:100",
@@ -125,15 +223,15 @@ def test_render_comment_history_and_claims() -> None:
             ],
         )
     ]
-    text = render_comment(_state(history=history, claims=claims))
+    text = render_report(_state(history=history, claims=claims))
 
     assert "Will Y happen?" in text
     assert "Inflation is falling." in text
     assert "CPI report" in text
 
 
-def test_render_comment_truncates_rationales_before_claims() -> None:
-    long_rationale = "word " * 5000  # ~25000 chars, forces rationale truncation
+def test_render_report_never_truncates_rationale_or_claims() -> None:
+    long_rationale = "word " * 5000  # ~25000 chars
     claims = [
         ClaimView(
             claim_id=f"c{i}",
@@ -148,46 +246,15 @@ def test_render_comment_truncates_rationales_before_claims() -> None:
     ]
     state = _state(
         model_forecasts=[
-            ModelForecastInfo("model-a", 0.62, long_rationale),
-            ModelForecastInfo("model-b", 0.48, long_rationale),
+            ModelForecastInfo("model-a", 0.62, "s", long_rationale),
+            ModelForecastInfo("model-b", 0.48, "s", long_rationale),
         ],
         claims=claims,
     )
 
-    text = render_comment(state)
+    text = render_report(state)
 
-    assert len(text) <= MAX_COMMENT_CHARS
-    # Rationales got truncated (the full 25000-char blob can't survive).
-    assert "[truncated]" in text
-    # At least some claims should have survived given the truncation order.
-    assert "## Claims used" in text
-
-
-def test_render_comment_extreme_truncation_still_fits() -> None:
-    # So many huge claims that even dropping the rationale to its floor and
-    # every claim still risks overflow -- render_comment must still return a
-    # string within budget (hard-truncating as a last resort).
-    huge_claim_text = "x" * 500
-    claims = [
-        ClaimView(
-            claim_id=f"c{i}",
-            text=huge_claim_text,
-            kind="fact",
-            support=0.5,
-            support_method="jev",
-            dossier_id="dos:1",
-            evidence=[],
-        )
-        for i in range(200)
-    ]
-    state = _state(
-        model_forecasts=[
-            ModelForecastInfo("model-a", 0.62, "reason " * 3000),
-            ModelForecastInfo("model-b", 0.48, "reason " * 3000),
-        ],
-        claims=claims,
-    )
-
-    text = render_comment(state)
-
-    assert len(text) <= MAX_COMMENT_CHARS
+    assert "[truncated]" not in text
+    assert long_rationale in text
+    for i in range(50):
+        assert f"Claim number {i} with some supporting detail text." in text

@@ -9,6 +9,8 @@ same as a failed call.
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -20,10 +22,23 @@ from forecasting_tools.helpers.prediction_extractor import PredictionExtractor
 from betomcat.llm import LLMResult, OpenRouterClient
 from betomcat.pool import ModelSpec
 
+logger = logging.getLogger(__name__)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS_DIR = REPO_ROOT / "prompts"
 
 QuestionKind = Literal["binary", "multiple_choice", "numeric"]
+
+SUMMARY_INSTRUCTION = (
+    "\n\n## Summary line\n\n"
+    'Immediately before your final answer, write one line that starts with "Summary:" '
+    "and gives the core of your reasoning in at most 60 words: the base rate or status "
+    "quo you anchored on and the evidence that moved you. Do not repeat the final "
+    "answer format inside it.\n"
+)
+
+_SUMMARY_LINE_RE = re.compile(r"^[-#*\s]*summary\**\s*:\s*\**\s*(.*)$", re.IGNORECASE)
+_SUMMARY_WORD_CAP = 60
 
 
 class ForecastParseError(Exception):
@@ -60,27 +75,60 @@ class ModelResult:
     tokens_in: int
     tokens_out: int
     value: float | dict[str, float] | list[float]
+    summary: str
 
 
 def render_prompt(kind: QuestionKind, fields: PromptFields) -> str:
-    """Fill `prompts/{kind}.md` with `fields`."""
+    """Fill `prompts/{kind}.md` with `fields`, then append `SUMMARY_INSTRUCTION`."""
     template = Template((PROMPTS_DIR / f"{kind}.md").read_text(encoding="utf-8"))
-    return template.substitute(
-        title=fields.title,
-        background=fields.background,
-        resolution_criteria=fields.resolution_criteria,
-        fine_print=fields.fine_print,
-        today=fields.today,
-        close_time=fields.close_time,
-        resolve_time=fields.resolve_time,
-        briefing=fields.briefing,
-        claims=fields.claims,
-        family_claims=fields.family_claims,
-        history=fields.history,
-        units=fields.units,
-        bounds_text=fields.bounds_text,
-        options_list=fields.options_list,
+    return (
+        template.substitute(
+            title=fields.title,
+            background=fields.background,
+            resolution_criteria=fields.resolution_criteria,
+            fine_print=fields.fine_print,
+            today=fields.today,
+            close_time=fields.close_time,
+            resolve_time=fields.resolve_time,
+            briefing=fields.briefing,
+            claims=fields.claims,
+            family_claims=fields.family_claims,
+            history=fields.history,
+            units=fields.units,
+            bounds_text=fields.bounds_text,
+            options_list=fields.options_list,
+        )
+        + SUMMARY_INSTRUCTION
     )
+
+
+def _cap_words(text: str, limit: int) -> str:
+    """`text` truncated to `limit` words, marked with a trailing " ..." if cut."""
+    words = text.split()
+    if len(words) <= limit:
+        return " ".join(words)
+    kept = " ".join(words[:limit])
+    return f"{kept} ..." if kept else "..."
+
+
+def extract_summary(text: str) -> str:
+    """Pull the model's self-written "Summary:" line out of its response.
+
+    Takes the LAST line whose stripped form is a `Summary:` line (tolerating
+    a leading `- ` bullet and markdown bold around the word), capped at
+    `_SUMMARY_WORD_CAP` words. Falls back to the first `_SUMMARY_WORD_CAP`
+    words of the response when no such line is present -- logging only that
+    the line was missing, never the rationale or any probability, since this
+    repo's Actions logs are public.
+    """
+    for line in reversed(text.splitlines()):
+        match = _SUMMARY_LINE_RE.match(line.strip())
+        if match:
+            content = match.group(1).strip().strip("*").strip()
+            return _cap_words(content, _SUMMARY_WORD_CAP)
+    logger.warning("model response had no Summary: line; using a truncated fallback")
+    words = text.split()
+    return " ".join(words[:_SUMMARY_WORD_CAP]) + " ..."
 
 
 def _to_model_result(
@@ -93,6 +141,7 @@ def _to_model_result(
         tokens_in=llm_result.tokens_in,
         tokens_out=llm_result.tokens_out,
         value=value,  # type: ignore[arg-type]
+        summary=extract_summary(llm_result.text),
     )
 
 

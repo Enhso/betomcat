@@ -410,6 +410,9 @@ async def test_budget_pacing_narrows_pool_before_draw(tmp_path: Path) -> None:
 
         comment_calls = [c for c in metaculus.calls if c[0] == "post_comment"]
         assert comment_calls
-        assert "budget pacing: excluded model-c" in comment_calls[-1][1]
+        # The pacing exclusion is on the audit report, not the short posted comment.
+        assert "budget pacing: excluded model-c" not in comment_calls[-1][1]
+        submissions = ledger.get_submissions(outcome.run_id)
+        assert "budget pacing: excluded model-c" in submissions[-1]["report"]
     finally:
         ledger.close()

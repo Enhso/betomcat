@@ -11,6 +11,7 @@ from forecasting_tools.data_models.questions import NumericQuestion
 from betomcat.forecast import (
     ForecastParseError,
     PromptFields,
+    extract_summary,
     forecast_binary,
     forecast_multiple_choice,
     forecast_numeric,
@@ -71,6 +72,8 @@ def test_render_prompt_binary_fills_placeholders() -> None:
     assert "Fine print here." in text
     assert "some claim" in text
     assert "Probability: ZZ%" in text
+    assert '"Summary:"' in text
+    assert text.index('"Summary:"') > text.index("Probability: ZZ%")
 
 
 def test_render_prompt_multiple_choice_fills_placeholders() -> None:
@@ -169,3 +172,151 @@ async def test_forecast_numeric_parse_failure_raises() -> None:
 
     with pytest.raises(ForecastParseError):
         await forecast_numeric(MODEL, "prompt", llm, timeout=10.0, question=question)
+
+
+# -- extract_summary -----------------------------------------------------
+
+
+def test_extract_summary_plain_line() -> None:
+    text = (
+        "Reasoning...\n\n"
+        "Summary: base rate is 20%, recent news pushed it up.\n\n"
+        "Probability: 30%"
+    )
+
+    assert extract_summary(text) == "base rate is 20%, recent news pushed it up."
+
+
+def test_extract_summary_tolerates_bold_and_bullet() -> None:
+    text = (
+        "Reasoning...\n\n"
+        "- **Summary:** anchored on the historical base rate.\n\n"
+        "Probability: 30%"
+    )
+
+    assert extract_summary(text) == "anchored on the historical base rate."
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "**Summary**: anchored on the base rate.",
+        "### Summary: anchored on the base rate.",
+        "SUMMARY: anchored on the base rate.",
+    ],
+)
+def test_extract_summary_tolerates_markdown_variants(line: str) -> None:
+    assert extract_summary(f"Reasoning...\n{line}\nProbability: 30%") == (
+        "anchored on the base rate."
+    )
+
+
+def test_extract_summary_takes_last_matching_line() -> None:
+    text = (
+        "Summary: an earlier draft line that should be ignored.\n\n"
+        "More reasoning...\n\n"
+        "Summary: the real summary line.\n\n"
+        "Probability: 30%"
+    )
+
+    assert extract_summary(text) == "the real summary line."
+
+
+def test_extract_summary_caps_at_60_words() -> None:
+    long_summary = " ".join(f"word{i}" for i in range(80))
+    text = f"Summary: {long_summary}\n\nProbability: 30%"
+
+    result = extract_summary(text)
+
+    assert result.endswith(" ...")
+    assert len(result[: -len(" ...")].split()) == 60
+
+
+def test_extract_summary_falls_back_when_missing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    text = "Just reasoning with no summary marker.\n\nProbability: 30%"
+
+    with caplog.at_level("WARNING"):
+        result = extract_summary(text)
+
+    assert result == "Just reasoning with no summary marker. Probability: 30% ..."
+    assert any("Summary" in record.message for record in caplog.records)
+    # The warning must never leak rationale text or probabilities.
+    for record in caplog.records:
+        assert "30%" not in record.message
+        assert "reasoning" not in record.message
+
+
+# -- Summary line coexisting with the final answer block ------------------
+
+
+async def test_forecast_binary_reads_final_answer_past_summary_line() -> None:
+    text = (
+        "Reasoning...\n\n"
+        "Summary: base rate near 30%, but momentum pushed it higher.\n\n"
+        "Probability: 65%"
+    )
+    llm = FakeLLM(text=text)
+
+    result = await forecast_binary(MODEL, "prompt", llm, timeout=10.0)
+
+    assert result.value == pytest.approx(0.65)
+    assert result.summary == "base rate near 30%, but momentum pushed it higher."
+
+
+async def test_forecast_multiple_choice_reads_final_answer_past_summary_line() -> None:
+    text = (
+        "Reasoning...\n\n"
+        "Summary: about 30% base rate for No, evidence favored Yes.\n\n"
+        "Yes: 70%\nNo: 30%"
+    )
+    llm = FakeLLM(text=text)
+
+    result = await forecast_multiple_choice(
+        MODEL, "prompt", llm, timeout=10.0, options=["Yes", "No"]
+    )
+
+    assert result.value == pytest.approx({"Yes": 0.7, "No": 0.3})
+    assert result.summary == "about 30% base rate for No, evidence favored Yes."
+
+
+async def test_forecast_numeric_reads_final_answer_past_summary_line() -> None:
+    question = NumericQuestion(
+        question_text="How many widgets?",
+        upper_bound=100.0,
+        lower_bound=0.0,
+        open_upper_bound=True,
+        open_lower_bound=True,
+        zero_point=None,
+    )
+    percentile_lines = "\n".join(
+        f"Percentile {p}: {v}"
+        for p, v in [
+            (1, 5),
+            (5, 10),
+            (10, 15),
+            (20, 25),
+            (40, 40),
+            (50, 50),
+            (60, 60),
+            (80, 75),
+            (90, 85),
+            (95, 90),
+            (99, 95),
+        ]
+    )
+    text = (
+        "Reasoning...\n\n"
+        "Summary: anchored near 30% of the range based on the recent trend.\n\n"
+        f"{percentile_lines}"
+    )
+    llm = FakeLLM(text=text)
+
+    result = await forecast_numeric(
+        MODEL, "prompt", llm, timeout=10.0, question=question
+    )
+
+    assert isinstance(result.value, list)
+    assert len(result.value) == question.cdf_size
+    assert result.summary == "anchored near 30% of the range based on the recent trend."

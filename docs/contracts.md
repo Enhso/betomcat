@@ -301,9 +301,32 @@ in-memory default stays for tests.
 
 ---
 
-## E. betomcat private-comment layout (C3, spec s9)
+## E. betomcat private-comment layout (C3)
 
-Rendered from pipeline state; no LLM authorship. Sections in order:
+Supersedes spec s9's comment layout per Hatim's 2026-09-24 decision: Metaculus
+penalizes long comments, so the posted comment carries only a short summary,
+not the audit report.
+
+Both `render_comment` and `render_report` (`comment.py`) are pure functions of
+pipeline state; no LLM authorship happens in either.
+
+**Posted comment (`render_comment`)** -- what actually goes to Metaculus:
+
+1. Header line: `betomcat v{bot_version}, {kind} forecast[, degraded research]`.
+2. One bullet per drawn model: `- **{model_id}** ({format_value(value)}): {summary}`.
+   The `({...})` value part is omitted for numeric (list) values.
+
+`summary` is a `Summary:` line the forecasting model itself writes immediately
+before its final answer (`forecast.py`'s `SUMMARY_INSTRUCTION`, appended to
+every rendered prompt), extracted by `forecast.extract_summary` and capped at
+60 words. Hard cap: `COMMENT_MAX_CHARS` (1,500). If the full-length summaries
+don't fit, every summary is shortened by the same word count (word boundary,
+`" ..."`) rather than cutting the comment's tail.
+
+**Audit report (`render_report`)** -- kept for logging only, never posted.
+Stored in `submissions.report` (inside the encrypted state snapshot, so it
+stays private). No truncation: every rationale and every claim survives.
+Sections in order:
 
 1. Header: bot version, submission kind (`final` / `provisional` / `single-model at
    hard cutoff`), UTC time, degraded-mode flag if IW was unavailable.
@@ -316,4 +339,4 @@ Rendered from pipeline state; no LLM authorship. Sections in order:
 6. Personal-history matches (title, Hatim's forecast, resolution).
 7. Claims used: text, support, and for each piece of evidence the source title,
    URL, provider, published date, fetch time, and short content hash.
-8. Each model's rationale, truncated to fit Metaculus's comment limit.
+8. Each model's full rationale.

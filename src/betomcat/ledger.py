@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     kind TEXT NOT NULL,
     forecast_json TEXT,
     comment_posted INTEGER NOT NULL DEFAULT 0,
+    report TEXT,
     submitted_at TIMESTAMP NOT NULL
 );
 
@@ -115,7 +116,16 @@ class Ledger:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        self._migrate_submissions_report_column()
         self._conn.commit()
+
+    def _migrate_submissions_report_column(self) -> None:
+        """Add `submissions.report` to a pre-existing DB that predates it."""
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(submissions)")
+        }
+        if "report" not in columns:
+            self._conn.execute("ALTER TABLE submissions ADD COLUMN report TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -361,18 +371,20 @@ class Ledger:
         kind: str,
         forecast: object,
         comment_posted: bool,
+        report: str | None = None,
     ) -> None:
         self._conn.execute(
             """
             INSERT INTO submissions
-                (run_id, kind, forecast_json, comment_posted, submitted_at)
-            VALUES (?, ?, ?, ?, ?)
+                (run_id, kind, forecast_json, comment_posted, report, submitted_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 kind,
                 orjson.dumps(forecast).decode() if forecast is not None else None,
                 int(comment_posted),
+                report,
                 _now_iso(),
             ),
         )

@@ -34,7 +34,12 @@ from forecasting_tools.data_models.questions import (
 
 from betomcat import reconcile
 from betomcat.budget import BudgetGuard
-from betomcat.comment import CommentState, ModelForecastInfo, render_comment
+from betomcat.comment import (
+    CommentState,
+    ModelForecastInfo,
+    render_comment,
+    render_report,
+)
 from betomcat.forecast import (
     ForecastParseError,
     ModelResult,
@@ -396,7 +401,9 @@ async def _submit(
         family_probability=family.probability,
         draw=draw_result,
         model_forecasts=[
-            ModelForecastInfo(mid, results[mid].value, results[mid].rationale)
+            ModelForecastInfo(
+                mid, results[mid].value, results[mid].summary, results[mid].rationale
+            )
             for mid in ordered_ids
         ],
         arithmetic=arithmetic,
@@ -408,7 +415,11 @@ async def _submit(
     comment_text = render_comment(comment_state)
     await deps.metaculus.post_comment(question, comment_text)
     deps.ledger.record_submission(
-        run_id, submission_kind, final_value, comment_posted=True
+        run_id,
+        submission_kind,
+        final_value,
+        comment_posted=True,
+        report=render_report(comment_state),
     )
 
 

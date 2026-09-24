@@ -1,8 +1,11 @@
-"""Private-comment rendering (contracts.md s E, spec s9).
+"""Private-comment and audit-report rendering (contracts.md s E).
 
-A pure function over pipeline state -- no LLM authorship, nothing here calls
-out to anything. Kept under Metaculus's comment length limit by truncating
-rationales first, then the claims list, in that order.
+Both are pure functions over pipeline state -- no LLM authorship, nothing
+here calls out to anything. Metaculus penalizes long comments (Hatim,
+2026-09-24), so `render_comment` posts only a short per-model summary line
+under a hard character cap. `render_report` renders the full audit trail
+(every rationale, every claim, no truncation) for the ledger only -- it is
+never posted.
 """
 
 from __future__ import annotations
@@ -12,8 +15,7 @@ from dataclasses import dataclass, field
 from betomcat.pool import DrawResult
 from betomcat.research import ClaimView, HistoryItem
 
-MAX_COMMENT_CHARS = 9500
-_RATIONALE_CAPS: list[int | None] = [None, 2000, 1000, 500, 200]
+COMMENT_MAX_CHARS = 1500
 
 
 def format_value(value: float | dict[str, float] | list[float]) -> str:
@@ -29,6 +31,7 @@ def format_value(value: float | dict[str, float] | list[float]) -> str:
 class ModelForecastInfo:
     model_id: str
     value: float | dict[str, float] | list[float]
+    summary: str
     rationale: str
 
 
@@ -53,9 +56,12 @@ class CommentState:
     claims: list[ClaimView] = field(default_factory=list)
 
 
-def _build(
-    state: CommentState, rationale_cap: int | None, claims: list[ClaimView]
-) -> str:
+def render_report(state: CommentState) -> str:
+    """Render the full audit report: every rationale, every claim, no cap.
+
+    Never posted to Metaculus -- stored via `Ledger.record_submission`'s
+    `report` column, inside the encrypted state snapshot, for later review.
+    """
     lines: list[str] = []
     lines.append(f"# betomcat v{state.bot_version} -- {state.kind} forecast")
     lines.append(f"Submitted: {state.timestamp} UTC")
@@ -108,8 +114,8 @@ def _build(
         lines.append("- none")
 
     lines.append("\n## Claims used")
-    if claims:
-        for c in claims:
+    if state.claims:
+        for c in state.claims:
             support = "n/a" if c.support is None else f"{c.support:.2f}"
             lines.append(f"- [support={support}] {c.text}")
             for ev in c.evidence:
@@ -123,36 +129,30 @@ def _build(
 
     lines.append("\n## Rationales")
     for mf in state.model_forecasts:
-        rationale = mf.rationale
-        if rationale_cap is not None and len(rationale) > rationale_cap:
-            rationale = rationale[:rationale_cap] + "... [truncated]"
         lines.append(f"### {mf.model_id}")
-        lines.append(rationale)
+        lines.append(mf.rationale)
 
     return "\n".join(lines)
 
 
+def _comment_bullet(mf: ModelForecastInfo) -> str:
+    value_part = "" if isinstance(mf.value, list) else f" ({format_value(mf.value)})"
+    return f"- **{mf.model_id}**{value_part}: {mf.summary}"
+
+
 def render_comment(state: CommentState) -> str:
-    """Render the private comment, truncating to fit `MAX_COMMENT_CHARS`.
+    """Render the short private comment: header + one summary bullet per model.
 
-    Truncation order: rationales are shortened first (progressively, via
-    `_RATIONALE_CAPS`); if still over budget, claims are dropped from the
-    tail of the list (already support-sorted, so weakest first).
+    Metaculus penalizes long comments (Hatim, 2026-09-24), so this carries
+    only each model's self-written summary line (already capped at 60 words by
+    `forecast.extract_summary`). `COMMENT_MAX_CHARS` is a backstop only.
     """
-    for cap in _RATIONALE_CAPS:
-        text = _build(state, cap, state.claims)
-        if len(text) <= MAX_COMMENT_CHARS:
-            return text
+    header = f"betomcat v{state.bot_version}, {state.kind} forecast"
+    if state.degraded:
+        header += ", degraded research"
 
-    min_cap = _RATIONALE_CAPS[-1]
-    claims = list(state.claims)
-    while claims:
-        claims = claims[:-1]
-        text = _build(state, min_cap, claims)
-        if len(text) <= MAX_COMMENT_CHARS:
-            return text
-
-    text = _build(state, min_cap, [])
-    if len(text) > MAX_COMMENT_CHARS:
-        text = text[: MAX_COMMENT_CHARS - 20] + "\n\n[truncated]"
+    lines = [header] + [_comment_bullet(mf) for mf in state.model_forecasts]
+    text = "\n".join(lines)
+    if len(text) > COMMENT_MAX_CHARS:
+        text = text[: COMMENT_MAX_CHARS - 4] + " ..."
     return text
