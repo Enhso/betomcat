@@ -326,3 +326,31 @@ Decisions (defaults in force until answered):
   Gemma out of v1's pool and the IW worker chain.
 - gpt-6-luna live call billed `cost_usd` $0.0010 (BYOK upstream cost read
   correctly, C3c).
+- **Hatim approved (2026-09-24 evening):** replacement draw (`1a4912c`: a slot
+  whose attempts run out before the soft deadline gets a weighted pick from the
+  untried budget-eligible spares, snapshot weights, max 4 per run); Gemma out of
+  the v1 pool and IW's worker chain (`a3b1286`, chain = `openai/gpt-6-luna`);
+  his prompt revision committed (`89ed003`, the `$` issue fixed). 187 tests.
+- **Luna price check:** Hatim saw a higher listed price. OpenRouter and OpenAI
+  (as reported 2026-09-23) both list $0.10 in / $0.50 out per M tokens after a
+  50% cut; GPT-5.6 Luna was $0.20/$1.20 and Fast mode is 2x. Reasoning effort
+  does not change the price but multiplies output tokens (15x spread low vs
+  max), so "$0.001 a call" (one 500-token test prompt) understates real calls.
+- **Pushed betomcat** `a3b1286` (live); first shift dispatched by hand, run
+  `36047612025`.
+- **First live shift** (`36047612025`, 19:21 UTC): IW checkout via deploy key,
+  cargo build, iw-server healthy, heartbeats every 5 min ("1 practice question
+  skipped"), snapshot recorded. It exposed two state bugs, fixed in `bf98280`:
+  (1) `GET /releases/tags/state` never returns a draft, so every snapshot and
+  restore created a new draft and each shift would start from an empty ledger
+  (the mocks faked the tags endpoint returning the draft); now the release list
+  is used, uploads go to the oldest `state` draft and restore/rotation see all
+  of them. (2) With the default relative `DATA_DIR`, iw-server (cwd = IW
+  checkout) wrote `iw/data/iw.sqlite` while snapshots read `./data/iw.sqlite`,
+  so IW state was never saved; `IW_DB_PATH` is now absolute. Live check: the
+  fixed `pull-state` restored the shift's snapshot.
+- The first shift was cancelled and replaced by `36050659995` on `bf98280`. A
+  normal cancel took effect only with force-cancel, and the snapshot on
+  termination failed (HTTP error, token likely revoked mid-cancel): a cancelled
+  shift can lose up to 15 min of state. The empty extra `state` drafts from bug
+  (1) are harmless clutter.
