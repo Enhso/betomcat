@@ -59,7 +59,9 @@ DRAIN_STOP_FRACTION = 0.1
 SNAPSHOT_INTERVAL_SECONDS = 15 * 60
 IW_HEALTH_TIMEOUT_SECONDS = 90.0
 IW_STOP_TIMEOUT_SECONDS = 20.0
-DEFAULT_LLM_MODEL = "google/gemma-4-31b-it:free,openai/gpt-6-luna"
+# Gemma is left out: its Google free-tier quota is shared with v2 (BUILD_LOG
+# 2026-09-24), so IW calls would 429 and eat v2's budget.
+DEFAULT_LLM_MODEL = "openai/gpt-6-luna"
 
 _SENSITIVE_LOGGERS = frozenset(
     {"betomcat.metaculus", "betomcat.comment", "betomcat.forecast", "betomcat.research"}

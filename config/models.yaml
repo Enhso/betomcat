@@ -116,7 +116,7 @@ models:
   # -- funded key, free -----------------------------------------------------
   - id: google/gemma-4-31b-it:free
     tier: free
-    enabled: true
+    enabled: false
     key: funded
     max_tokens: 4000
     reasoning:
@@ -124,7 +124,7 @@ models:
     price_in: 0
     price_out: 0
     context_tokens: 262000
-    notes: "google/ :free -- stays on the funded key (google-ai-studio is allowed)."
+    notes: "Disabled 2026-09-24: its Google free-tier quota (16k input tokens/min) is shared with v2 and IW."
 
   # -- free key, free -------------------------------------------------------
   - id: nvidia/nemotron-3-ultra-550b-a55b:free
