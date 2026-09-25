@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 
 import httpx
 
+from betomcat.config import DEFAULT_BUDGET_WINDOW_END
 from betomcat.ledger import Ledger
 from betomcat.pool import ModelSpec, effective_key
 
@@ -39,7 +40,6 @@ CACHE_TTL_SECONDS = 60.0
 CHARS_PER_TOKEN = 3.5
 DEFAULT_INPUT_TOKENS = 12_000
 DEFAULT_OUTPUT_TOKENS = 10_000
-DEFAULT_WINDOW_END = datetime(2026, 10, 5, tzinfo=UTC)
 
 
 def filter_by_context(
@@ -320,7 +320,7 @@ class BudgetGuard:
 
     funded_api_key: str | None = None
     free_api_key: str | None = None
-    window_end: datetime = field(default_factory=lambda: DEFAULT_WINDOW_END)
+    window_end: datetime = field(default_factory=lambda: DEFAULT_BUDGET_WINDOW_END)
     http_client: httpx.AsyncClient | None = None
     cache: KeyStatusCache = field(default_factory=KeyStatusCache)
 

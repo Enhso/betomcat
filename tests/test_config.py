@@ -37,7 +37,7 @@ def test_load_settings_defaults(tmp_path: Path) -> None:
     assert settings.metaculus_token is None
     assert settings.openrouter_api_key is None
     assert settings.openrouter_free_api_key is None
-    assert settings.budget_window_end == datetime(2026, 10, 5, tzinfo=UTC)
+    assert settings.budget_window_end == datetime(2026, 10, 19, tzinfo=UTC)
     assert settings.iw_url == "http://127.0.0.1:8080"
     assert settings.data_dir == Path("./data")
     assert settings.soft_threshold_min == 30

@@ -15,7 +15,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from forecasting_tools.helpers.metaculus_client import MetaculusClient
 
-DEFAULT_BUDGET_WINDOW_END = datetime(2026, 10, 5, tzinfo=UTC)
+# End of MiniBench round 2 (5-19 Oct; Hatim, 2026-09-25). Past this date the
+# guard allows the whole remaining credit in a single day, so move it before.
+DEFAULT_BUDGET_WINDOW_END = datetime(2026, 10, 19, tzinfo=UTC)
 
 
 def _bool_env(name: str, default: bool) -> bool:
