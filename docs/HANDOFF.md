@@ -108,10 +108,53 @@ These are deployed but not yet observed running. Do them before new work.
 The order changed on 2026-09-25: the weight update was first because MiniBench
 round 1 was supposed to feed it from 1 Oct, but v1 has no forecasts in round 1,
 so there is nothing for it to score before mid-October. The referee and
-personal history improve every forecast from now on. **Hatim decides the
-order**; this is the lead's proposal with reasons.
+personal history improve every forecast from now on. 5.0 was added by Hatim
+at the end of the session as the next item. **Hatim decides the order**; the
+rest is the lead's proposal with reasons.
 
-### 5.1 Referee gate (spec s5) -- proposed first
+### 5.0 A fuller rationale in the posted comment -- next (Hatim, 2026-09-25)
+
+- **The ask:** Hatim read vezo3's two comments on Q43332 and found them too
+  terse. The comment should expand on the rationale behind the final
+  forecast. Take this first: it is small, and it shapes every comment from
+  the first real question (FE Fall, Mon 28 Sep).
+- **Current state:** the comment is a header plus one `Summary:` line per
+  model, written by each forecasting model itself and capped at 60 words
+  (`SUMMARY_INSTRUCTION` and `_SUMMARY_WORD_CAP` in `forecast.py`,
+  `render_comment` in `comment.py`, `COMMENT_MAX_CHARS` = 1500 as a backstop).
+  The live final comment was 82 words for two models. It never states the
+  submitted number or how the two forecasts combined into it, and it reads as
+  two separate opinions rather than one argument for the forecast. Read the
+  two comments (post 43327) through the API, s8; they are deliberately not
+  copied into this public repo.
+- **Constraints that still hold:** Metaculus penalizes long comments (Hatim,
+  2026-09-24) and there is one comment per question (`9e0a6c6`). The target
+  is fuller, not full: agree a length with Hatim (the lead would start around
+  150-250 words). The comment text must never reach the public Actions logs.
+- **What it should carry:** the submitted forecast; the base rate or status
+  quo anchored on; the two or three pieces of evidence that moved it, with
+  dates; where the two models disagreed, if they did (later fed by the
+  referee's disagreement type, s5.1); and what would change the forecast.
+- **Two ways to build it (present both to Hatim before building):**
+  (a) *No new LLM call.* Ask each model for a longer, structured summary
+  (anchor, key evidence, main risk, what would change it), raise the cap, and
+  have `render_comment` open with the submitted number and one mechanical
+  line on how it was combined (weights). No extra cost, the models' own
+  words, but still two voices.
+  (b) *One synthesized rationale.* A cheap-tier call (spec s5: no frontier
+  spend outside the two forecast calls) writes one paragraph from both
+  models' full rationales and the reconciled number, as v2 does with Gemma.
+  One voice, coherent with the final number, but it costs a call, must be
+  fed only the rationales so it cannot invent claims, and needs a fallback to
+  (a) when the call fails so the comment is never missing.
+- **Where:** `forecast.py` (instruction and cap), `comment.py`
+  (`render_comment`), contracts E (layout), tests in `tests/test_forecast.py`
+  and `tests/test_comment.py`. The audit report (`render_report`) is
+  unchanged.
+- **Check before shipping:** a local dry run (s8) prints the comment; compare
+  old and new on the same bot-testing-area question and show Hatim.
+
+### 5.1 Referee gate (spec s5) -- proposed after 5.0
 
 - **What:** when the two drawn models disagree past spec s5's bars (binary:
   |p_a - p_b| > 0.15; MC: total variation distance; numeric: medians more
@@ -219,10 +262,11 @@ order**; this is the lead's proposal with reasons.
    renewed, the horizon can follow the renewal period. The constant is
    `DEFAULT_BUDGET_WINDOW_END` in `src/betomcat/config.py` (env
    `BUDGET_WINDOW_END` overrides it; the workflow does not set it).
-2. **Priority order of s5** (the lead proposes referee, personal history,
-   weights, digest, merges).
-3. **Referee design** (s5.1: ladder change, classifier model, categories).
-4. **Weight scoring rule** (s5.3).
+2. **Comment rationale** (s5.0): option (a) or (b), and the target length.
+3. **Priority order of the rest of s5** (the lead proposes referee, personal
+   history, weights, digest, merges).
+4. **Referee design** (s5.1: ladder change, classifier model, categories).
+5. **Weight scoring rule** (s5.3).
 
 ## 7. Known risks
 

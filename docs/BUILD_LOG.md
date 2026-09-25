@@ -411,3 +411,7 @@ Decisions (defaults in force until answered):
   the old code. Also found: the website shows only the logged-in account's
   forecast, so vezo3's forecasts and private comments are checked through the
   API (`/api/comments/?author=308852&is_private=true`).
+- **Comments too terse (Hatim, end of session):** after reading vezo3's two
+  comments on Q43332, the posted comment should expand on the rationale
+  behind the final forecast. Added to HANDOFF as s5.0 (next), with two build
+  options and the length question for Hatim.
