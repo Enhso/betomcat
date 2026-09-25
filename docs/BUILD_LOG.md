@@ -415,3 +415,7 @@ Decisions (defaults in force until answered):
   comments on Q43332, the posted comment should expand on the rationale
   behind the final forecast. Added to HANDOFF as s5.0 (next), with two build
   options and the length question for Hatim.
+- **Comment rationale, option (b) (Hatim):** one synthesized rationale per
+  comment, written by a cheap-tier call from both models' full rationales and
+  the reconciled number, with today's summary lines as the fallback. Length
+  and model still open (HANDOFF s5.0).

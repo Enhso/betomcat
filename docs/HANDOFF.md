@@ -135,7 +135,13 @@ rest is the lead's proposal with reasons.
   quo anchored on; the two or three pieces of evidence that moved it, with
   dates; where the two models disagreed, if they did (later fed by the
   referee's disagreement type, s5.1); and what would change the forecast.
-- **Two ways to build it (present both to Hatim before building):**
+- **Decided (Hatim, 2026-09-25): option (b)**, one synthesized rationale.
+  Still open: the length (lead's suggestion 150-250 words) and the model
+  (lead's proposal: `openai/gpt-6-luna`, the IW default, ~$0.004 a call;
+  not Gemma, whose Google quota is shared with v2). Fallback when the
+  call fails or returns something unusable: today's per-model summary
+  lines, so a comment is never missing.
+- **The two options as presented:**
   (a) *No new LLM call.* Ask each model for a longer, structured summary
   (anchor, key evidence, main risk, what would change it), raise the cap, and
   have `render_comment` open with the submitted number and one mechanical
@@ -262,7 +268,7 @@ rest is the lead's proposal with reasons.
    renewed, the horizon can follow the renewal period. The constant is
    `DEFAULT_BUDGET_WINDOW_END` in `src/betomcat/config.py` (env
    `BUDGET_WINDOW_END` overrides it; the workflow does not set it).
-2. **Comment rationale** (s5.0): option (a) or (b), and the target length.
+2. **Comment rationale** (s5.0): (b) chosen; target length and model open.
 3. **Priority order of the rest of s5** (the lead proposes referee, personal
    history, weights, digest, merges).
 4. **Referee design** (s5.1: ladder change, classifier model, categories).
