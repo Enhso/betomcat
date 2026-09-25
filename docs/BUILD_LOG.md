@@ -354,3 +354,42 @@ Decisions (defaults in force until answered):
   termination failed (HTTP error, token likely revoked mid-cancel): a cancelled
   shift can lose up to 15 min of state. The empty extra `state` drafts from bug
   (1) are harmless clutter.
+
+### 2026-09-25
+
+- **Shift chain verified:** shifts `36081308251` (01:16), `36104096611`
+  (06:42) and `36133282660` (12:08) each dispatched by the previous one and
+  each logged `state snapshot restored`; snapshots every 15 min. Every
+  heartbeat: 0 open questions, 1 practice question skipped.
+- **MiniBench cadence (Metaculus API):** a round every second Monday, all
+  questions in its first ~3 days. `minibench-2026-09-07`: 59 questions opened
+  7-10 Sep, resolved 17-20 Sep. Current `minibench` (id 33125): 60 questions
+  opened 21-23 Sep, last closed 24 Sep 02:49, resolves 1-4 Oct. v1 went live
+  24 Sep 19:21, so it has no forecast in this round (spot checks: vezo3 0/37,
+  vezocontrol 0/21; the rest rate-limited). Next round expected Mon 5 Oct. The
+  `minibench` slug always points at the active round, so no config change.
+  FE Fall (`fall-futureeval-2026`, 33121) starts 28 Sep, forecasting ends
+  6 Jan 2027.
+- **Local end-to-end dry runs on HEAD `89069d0`** (local iw-server, fresh
+  data dir): Q43332 binary, sonnet-5 + gpt-6-sol, `submitted` in 3.5 min,
+  $0.033; Q43325 numeric, glm-5.2:free + nemotron-ultra:free, `submitted` in
+  8.5 min (glm one 429, nemotron one timeout and one unparseable reply).
+- **IW research failure found in the binary run:** one extraction batch's
+  gpt-6-luna call hit the worker's 120 s timeout, the whole extraction failed,
+  iw-server returned 502 and the run fell back to degraded research. IW
+  `1c3fe01` (pushed): a failed batch is logged and dropped, the job fails only
+  if every batch fails.
+- **Bug: questions dropped at shift end were never retried.** `has_run`
+  counted runs left open by a drained/cancelled shift. `1c8323a`: each host
+  shift marks open runs `abandoned` at startup; `has_run` ignores them.
+  `failed` stays terminal (no re-spend every poll).
+- **Budget horizon (Hatim):** invest in MiniBench round 2 first, then FE Fall;
+  about half the ~$99 left for round 2. `61231e7` moves `BUDGET_WINDOW_END` to
+  19 Oct (~$4/day allowance). Pool prices give ~$0.20 per question on average
+  (two calls, ~30k in / 3k out), ~$0.90 worst case (Fable + Astra), so a
+  60-question round is ~$12 expected and the split needs no code. The lead
+  proposed 6 Jan 2027 (~$1/day); rejected because it would ration frontier
+  models on MiniBench's busy days. Past the horizon the guard allows the whole
+  remainder in one day: move it before 19 Oct.
+- **Live post on bot-testing-area** (the go-live gate) was refused by the
+  session's permission classifier; Hatim runs it himself.
