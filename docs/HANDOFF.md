@@ -20,11 +20,9 @@ Check suite (betomcat):
 
 ## Before calling v1 deployed
 
-1. **Live run on bot-testing-area** (the BUILD_LOG go-live gate, never met).
-   Local dry runs passed 2026-09-25 (binary and numeric). Hatim runs the
-   posting run himself on Q43332 (post 43327): local iw-server plus
-   `DATA_DIR=<tmp> uv run betomcat forecast --url .../questions/43327/`.
-   Check the prediction and the short comment on Metaculus as `vezo3`.
+1. ~~Live run on bot-testing-area~~ done 2026-09-25 (Q43332, provisional and
+   final posted, $0.20; see BUILD_LOG). Private comments are not readable
+   through the comments API: check one on the site as `vezo3`.
 2. **First real tournament submission** (FE Fall from 28 Sep, MiniBench from
    5 Oct). Open the question on Metaculus as `vezo3`: the
    private comment must be the short form (header plus one `Summary:` bullet per
