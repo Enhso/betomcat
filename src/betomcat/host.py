@@ -12,10 +12,12 @@ Actions jobs ("shifts"). Each shift:
    and every 15 minutes.
 5. Stops claiming new questions 25 minutes before the shift ends, drains
    in-flight pipelines for another 20 minutes, then abandons whatever is
-   still running (the next shift re-picks unforecast questions). Shifts
-   shorter than ~83 minutes (test/smoke shifts) scale both margins down to
-   30%/10% of the shift instead, so a short shift still gets a real
-   claim-then-drain window (see `_shift_margins`).
+   still running -- the next shift marks those runs' ledger rows
+   'abandoned' at startup (`Ledger.abandon_unfinished_runs`), so it
+   re-picks the unforecast questions. Shifts shorter than ~83 minutes
+   (test/smoke shifts) scale both margins down to 30%/10% of the shift
+   instead, so a short shift still gets a real claim-then-drain window
+   (see `_shift_margins`).
 6. Stops iw-server, takes a final snapshot, and dispatches its successor
    via `workflow_dispatch` so the next shift starts with no dependency on
    cron timing.
@@ -304,6 +306,12 @@ async def run_host(
 
             deps = build_deps(settings, settings.dry_run)
             try:
+                abandoned = deps.ledger.abandon_unfinished_runs()
+                logger.info(
+                    "marked %d unfinished run(s) from earlier shifts abandoned",
+                    abandoned,
+                )
+
                 replayed = await replay_outbox(deps.iw, data_dir)
                 logger.info("outbox replay: %d document(s) ingested", replayed)
 

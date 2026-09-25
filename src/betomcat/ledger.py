@@ -168,11 +168,40 @@ class Ledger:
         return _row_to_dict(row)
 
     def has_run(self, question_id: str) -> bool:
-        """True if any run (finished or in-flight) already exists for this question."""
+        """True if a non-abandoned run (finished or in-flight) exists for this question.
+
+        An 'abandoned' run (see `abandon_unfinished_runs`) does not count, so
+        a question orphaned by a killed or drained prior shift gets retried.
+        Every other status does count, including 'failed' -- a deterministic
+        failure is not retried every poll.
+        """
         row = self._conn.execute(
-            "SELECT 1 FROM runs WHERE question_id = ? LIMIT 1", (question_id,)
+            "SELECT 1 FROM runs WHERE question_id = ? AND status IS NOT 'abandoned' "
+            "LIMIT 1",
+            (question_id,),
         ).fetchone()
         return row is not None
+
+    def abandon_unfinished_runs(self) -> int:
+        """Mark every still-in-flight (`status IS NULL`) run 'abandoned'.
+
+        Called once at host shift start, before the daemon loop begins
+        polling, when no pipeline from this process can possibly be in
+        flight yet. A run left NULL by a prior shift that was drained then
+        cancelled, or killed outright, would otherwise block `has_run`
+        forever once the ledger snapshot carrying it is restored, since no
+        future shift ever calls `finish_run` on it.
+
+        Returns:
+            Number of runs marked abandoned.
+        """
+        cursor = self._conn.execute(
+            "UPDATE runs SET status = 'abandoned', finished_at = ? "
+            "WHERE status IS NULL",
+            (_now_iso(),),
+        )
+        self._conn.commit()
+        return cursor.rowcount
 
     # -- runs ----------------------------------------------------------------
 

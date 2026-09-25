@@ -12,6 +12,8 @@ import orjson
 import pytest
 from pytest_httpx import HTTPXMock
 
+from betomcat.config import Settings
+from betomcat.daemon import DaemonHooks
 from betomcat.host import (
     _dispatch_successor,
     _iw_env,
@@ -20,7 +22,10 @@ from betomcat.host import (
     _shift_margins,
     _shift_timer,
     configure_host_logging,
+    run_host,
 )
+from betomcat.ledger import Ledger
+from betomcat.pipeline import PipelineDeps
 
 REPO = "Enhso/betomcat"
 
@@ -195,3 +200,89 @@ def test_iw_db_path_is_absolute_so_iw_and_snapshots_share_one_file(
     env = _iw_env(Path("data"), "http://127.0.0.1:8080")
 
     assert env["IW_DB_PATH"] == str(tmp_path / "data" / "iw.sqlite")
+
+
+class _FakeIwProcess:
+    """Stands in for `asyncio.subprocess.Process` so run_host never spawns iw-server."""
+
+    def __init__(self) -> None:
+        self.pid = 4242
+        self.returncode: int | None = None
+
+    def terminate(self) -> None:
+        self.returncode = 0
+
+    async def wait(self) -> int:
+        return 0
+
+
+def _host_settings(data_dir: Path) -> Settings:
+    return Settings(
+        metaculus_token=None,
+        openrouter_api_key=None,
+        openrouter_free_api_key=None,
+        asknews_api_key=None,
+        iw_url="http://127.0.0.1:8080",
+        data_dir=data_dir,
+        soft_threshold_min=30,
+        hard_threshold_min=5,
+        poll_seconds=300,
+        dry_run=True,
+        tournaments=(1,),
+    )
+
+
+async def test_run_host_abandons_unfinished_runs_before_the_daemon_loop_starts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression test for the bug this fixes: a run left NULL-status by a
+    killed or drained prior shift must be marked abandoned before run_daemon
+    starts polling, or `Ledger.has_run` blocks that question forever."""
+    iw_dir = tmp_path / "iw"
+    (iw_dir / "target" / "release").mkdir(parents=True)
+    (iw_dir / "target" / "release" / "iw-server").touch()
+    monkeypatch.setenv("IW_DIR", str(iw_dir))
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    seed = Ledger(data_dir / "ledger.sqlite")
+    seed.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+    orphaned_run = seed.start_run("metaculus:1")
+    seed.close()
+
+    async def fake_create_subprocess_exec(
+        *args: object, **kwargs: object
+    ) -> _FakeIwProcess:
+        return _FakeIwProcess()
+
+    async def fake_wait_for_health(*args: object, **kwargs: object) -> None:
+        return None
+
+    daemon_calls: list[int] = []
+
+    async def fake_run_daemon(
+        tournaments: tuple[int | str, ...],
+        deps: PipelineDeps,
+        poll_seconds: int,
+        hooks: DaemonHooks | None = None,
+    ) -> None:
+        # The abandon pass must already have run by the time the daemon loop
+        # is handed the ledger, or the next shift's `has_run` check would
+        # still see this run's original NULL status and skip the question.
+        row = deps.ledger.get_run(orphaned_run.id)
+        assert row is not None
+        assert row["status"] == "abandoned"
+        daemon_calls.append(1)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("betomcat.host._wait_for_health", fake_wait_for_health)
+    monkeypatch.setattr("betomcat.host.run_daemon", fake_run_daemon)
+
+    with caplog.at_level(logging.INFO):
+        await run_host(_host_settings(data_dir), shift_minutes=10, local=True)
+
+    assert daemon_calls == [1]
+    assert any(
+        "marked 1 unfinished run(s) from earlier shifts abandoned" in r.getMessage()
+        for r in caplog.records
+    )

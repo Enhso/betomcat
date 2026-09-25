@@ -48,6 +48,76 @@ def test_has_run(tmp_path: Path) -> None:
         ledger.close()
 
 
+def test_abandon_unfinished_runs_marks_only_null_status_runs(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        ledger.upsert_question("metaculus:2", "Will Y?", "binary", None, None)
+        in_flight = ledger.start_run("metaculus:1")
+        finished = ledger.start_run("metaculus:2")
+        ledger.finish_run(finished.id, status="submitted")
+
+        count = ledger.abandon_unfinished_runs()
+
+        assert count == 1
+        in_flight_row = ledger.get_run(in_flight.id)
+        assert in_flight_row is not None
+        assert in_flight_row["status"] == "abandoned"
+        assert in_flight_row["finished_at"] is not None
+        finished_row = ledger.get_run(finished.id)
+        assert finished_row is not None
+        assert finished_row["status"] == "submitted"
+    finally:
+        ledger.close()
+
+
+def test_has_run_ignores_abandoned_runs_but_counts_every_other_status(
+    tmp_path: Path,
+) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        for question_id in ("metaculus:1", "metaculus:2", "metaculus:3", "metaculus:4"):
+            ledger.upsert_question(question_id, "Will X?", "binary", None, None)
+
+        # Abandoned-only: must not block a retry.
+        abandoned_only = ledger.start_run("metaculus:1")
+        ledger.finish_run(abandoned_only.id, status="abandoned")
+        assert ledger.has_run("metaculus:1") is False
+
+        # Still NULL (in-flight): must keep blocking within the same shift.
+        ledger.start_run("metaculus:2")
+        assert ledger.has_run("metaculus:2") is True
+
+        # Failed: not retried every poll.
+        failed = ledger.start_run("metaculus:3")
+        ledger.finish_run(failed.id, status="failed")
+        assert ledger.has_run("metaculus:3") is True
+
+        # Submitted: normal completed run.
+        submitted = ledger.start_run("metaculus:4")
+        ledger.finish_run(submitted.id, status="submitted")
+        assert ledger.has_run("metaculus:4") is True
+    finally:
+        ledger.close()
+
+
+def test_has_run_true_when_an_abandoned_run_has_a_newer_in_flight_sibling(
+    tmp_path: Path,
+) -> None:
+    """A question with one abandoned run and one newer in-flight run (e.g. the
+    abandoned attempt got retried this shift) must still block a second claim."""
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        old = ledger.start_run("metaculus:1")
+        ledger.finish_run(old.id, status="abandoned")
+        ledger.start_run("metaculus:1")
+
+        assert ledger.has_run("metaculus:1") is True
+    finally:
+        ledger.close()
+
+
 def test_run_lifecycle(tmp_path: Path) -> None:
     ledger = Ledger(tmp_path / "ledger.sqlite")
     try:
