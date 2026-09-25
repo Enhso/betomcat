@@ -79,6 +79,11 @@ Check suite (betomcat):
   is the control).
 - Comments: Metaculus penalizes long ones (Hatim, 2026-09-24). v1 posts each
   model's own `Summary:` line (<= 60 words); v2 posts a <= 100-word summary.
+  v1 posts one comment per question, with the forecast that stands (final,
+  or the provisional if no final by the hard deadline).
+- vezo3 (user id 308852) forecasts and private comments are not visible from
+  Hatim's account; read them via the API with `METACULUS_TOKEN`
+  (`/api/comments/?author=308852&is_private=true&on_post=<post>`).
 - [PRACTICE] questions: v1 never forecasts them; v2 does (template behaviour).
 
 ## Not built yet (after deployment, in priority order)

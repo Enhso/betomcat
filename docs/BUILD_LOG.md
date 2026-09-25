@@ -401,3 +401,13 @@ Decisions (defaults in force until answered):
   `comment_posted = 1`; Metaculus's comment API does not list private
   comments, so the text was not re-read from Metaculus. Cost $0.20. nex
   disabled in the pool.
+- **One comment per question (Hatim):** the live run left two private
+  comments (provisional 40 words, final 82 words repeating the provisional's
+  line). Decision: publish only a comment coherent with the standing
+  forecast. `9e0a6c6`: provisional forecasts still post at once
+  without a comment; the comment posts with the final, or with the
+  provisional if it still stands at the hard deadline. The builder stalled
+  twice (stream watchdog); the lead wrote the tests and checked they fail on
+  the old code. Also found: the website shows only the logged-in account's
+  forecast, so vezo3's forecasts and private comments are checked through the
+  API (`/api/comments/?author=308852&is_private=true`).
