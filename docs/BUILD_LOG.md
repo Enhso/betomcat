@@ -393,3 +393,11 @@ Decisions (defaults in force until answered):
   remainder in one day: move it before 19 Oct.
 - **Live post on bot-testing-area** (the go-live gate) was refused by the
   session's permission classifier; Hatim runs it himself.
+- **Go-live gate met:** Hatim ran the live run on Q43332 (post 43327) at
+  13:47 UTC. Drew nex-n2.5-pro:free + gpt-6-astra; nex failed 3/3 with 404
+  (0 OpenRouter endpoints), the replacement draw brought in sonnet-5, which
+  was posted as `provisional` (13:48); astra succeeded on its 2nd try and the
+  `final` was posted at 13:53. IW research not degraded. Both submissions have
+  `comment_posted = 1`; Metaculus's comment API does not list private
+  comments, so the text was not re-read from Metaculus. Cost $0.20. nex
+  disabled in the pool.
