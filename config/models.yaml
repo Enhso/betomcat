@@ -153,7 +153,7 @@ models:
 
   - id: nex-agi/nex-n2.5-pro:free
     tier: free
-    enabled: true
+    enabled: false
     key: free
     max_tokens: 4000
     reasoning:
@@ -161,7 +161,7 @@ models:
     price_in: 0
     price_out: 0
     context_tokens: 262000
-    notes: null
+    notes: "Disabled 2026-09-25: OpenRouter lists 0 endpoints; every call returns 404."
 
   - id: dots-studio/dots-3-note-preview:free
     tier: free
