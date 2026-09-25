@@ -310,6 +310,11 @@ not the audit report.
 Both `render_comment` and `render_report` (`comment.py`) are pure functions of
 pipeline state; no LLM authorship happens in either.
 
+Each question gets exactly one posted comment (Hatim's 2026-09-25 decision):
+the comment is posted with the `final` submission only. If hard arrives with
+a `provisional` still standing (no `final` ever came), the `provisional`'s
+already-rendered comment is posted then instead.
+
 **Posted comment (`render_comment`)** -- what actually goes to Metaculus:
 
 1. Header line: `betomcat v{bot_version}, {kind} forecast[, degraded research]`.

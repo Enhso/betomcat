@@ -419,6 +419,18 @@ class Ledger:
         )
         self._conn.commit()
 
+    def mark_comment_posted(self, run_id: int, kind: str) -> None:
+        """Flip `comment_posted` to true for the (`run_id`, `kind`) submission.
+
+        Used when a `provisional` submission's comment, withheld at post
+        time, is posted later because hard arrived with it still standing.
+        """
+        self._conn.execute(
+            "UPDATE submissions SET comment_posted = 1 WHERE run_id = ? AND kind = ?",
+            (run_id, kind),
+        )
+        self._conn.commit()
+
     def get_submissions(self, run_id: int) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM submissions WHERE run_id = ? ORDER BY id", (run_id,)

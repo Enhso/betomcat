@@ -242,6 +242,28 @@ def test_submissions_round_trip(tmp_path: Path) -> None:
         ledger.close()
 
 
+def test_mark_comment_posted_flips_only_the_matching_submission(
+    tmp_path: Path,
+) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        ledger.upsert_question("metaculus:2", "Will Y?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        other_run = ledger.start_run("metaculus:2")
+        ledger.record_submission(run.id, "provisional", 0.62, comment_posted=False)
+        ledger.record_submission(run.id, "final", 0.55, comment_posted=False)
+        ledger.record_submission(other_run.id, "provisional", 0.3, comment_posted=False)
+
+        ledger.mark_comment_posted(run.id, "provisional")
+
+        submissions = ledger.get_submissions(run.id)
+        assert [s["comment_posted"] for s in submissions] == [1, 0]
+        assert ledger.get_submissions(other_run.id)[0]["comment_posted"] == 0
+    finally:
+        ledger.close()
+
+
 def test_ledger_migrates_submissions_table_missing_report_column(
     tmp_path: Path,
 ) -> None:

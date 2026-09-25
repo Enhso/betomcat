@@ -223,8 +223,12 @@ async def test_second_model_slow_then_provisional_then_final(tmp_path: Path) -> 
         assert outcome.status == "submitted"
         submissions = ledger.get_submissions(outcome.run_id)
         assert [s["kind"] for s in submissions] == ["provisional", "final"]
+        assert [s["comment_posted"] for s in submissions] == [0, 1]
         post_binary_calls = [c for c in metaculus.calls if c[0] == "post_binary"]
         assert len(post_binary_calls) == 2
+        comment_calls = [c for c in metaculus.calls if c[0] == "post_comment"]
+        assert len(comment_calls) == 1
+        assert "final forecast" in str(comment_calls[0][1])
     finally:
         ledger.close()
 
@@ -243,6 +247,14 @@ async def test_second_model_never_returns_provisional_stands(tmp_path: Path) -> 
 
     llm = ScriptedLLM({"model-a": script_a, "model-b": script_b})
     metaculus = FakeMetaculus()
+    comment_times: list[datetime] = []
+    post_comment = metaculus.post_comment
+
+    async def timed_post_comment(question: object, text: str) -> None:
+        comment_times.append(clock.now)
+        await post_comment(question, text)
+
+    metaculus.post_comment = timed_post_comment  # type: ignore[method-assign]
     ledger = Ledger(tmp_path / "ledger.sqlite")
     try:
         deps = _deps(tmp_path, llm, clock, metaculus, ledger)
@@ -251,8 +263,13 @@ async def test_second_model_never_returns_provisional_stands(tmp_path: Path) -> 
         assert outcome.status == "provisional"
         submissions = ledger.get_submissions(outcome.run_id)
         assert [s["kind"] for s in submissions] == ["provisional"]
+        assert submissions[0]["comment_posted"] == 1
         post_binary_calls = [c for c in metaculus.calls if c[0] == "post_binary"]
         assert len(post_binary_calls) == 1
+        comment_calls = [c for c in metaculus.calls if c[0] == "post_comment"]
+        assert len(comment_calls) == 1
+        assert "provisional forecast" in str(comment_calls[0][1])
+        assert comment_times[0] >= close_time - deps.hard_threshold
     finally:
         ledger.close()
 

@@ -10,6 +10,12 @@ is submitted immediately as `provisional`; the full drawn set, once
 complete, is submitted as `final`; nothing new is submitted once hard
 arrives -- whatever was last submitted stands. If nothing was ever
 submitted, the question is recorded `missed`: never a default number.
+Each question gets exactly one posted comment, coherent with whichever
+forecast stands at close (Hatim, 2026-09-25): a `provisional` submission
+posts its forecast but withholds its comment; the comment posts only
+with the `final` submission, or, if hard arrives with the provisional
+still standing and no final ever came, the kept provisional comment is
+posted right then.
 """
 
 from __future__ import annotations
@@ -370,7 +376,15 @@ async def _submit(
     submission_kind: Literal["provisional", "final"],
     pacing_note: str | None,
     deps: PipelineDeps,
-) -> None:
+) -> str:
+    """Post the forecast, record the submission, and return the rendered comment.
+
+    Each question gets exactly one posted comment (Hatim, 2026-09-25): a
+    `final` submission posts its comment immediately; a `provisional`
+    submission withholds it, recording `comment_posted=False` -- the caller
+    posts the returned text later only if hard arrives with the provisional
+    still standing.
+    """
     final_value: object
     arithmetic: str
     if kind == "binary":
@@ -427,14 +441,17 @@ async def _submit(
         claims=research.claims,
     )
     comment_text = render_comment(comment_state)
-    await deps.metaculus.post_comment(question, comment_text)
+    comment_posted = submission_kind == "final"
+    if comment_posted:
+        await deps.metaculus.post_comment(question, comment_text)
     deps.ledger.record_submission(
         run_id,
         submission_kind,
         final_value,
-        comment_posted=True,
+        comment_posted=comment_posted,
         report=render_report(comment_state),
     )
+    return comment_text
 
 
 def _slot_draw_result(
@@ -492,6 +509,7 @@ async def _run_model_ladder(
     duplicated: set[str] = set()
     results: dict[str, ModelResult] = {}
     submitted: RunStatus | None = None
+    provisional_comment_text: str | None = None
 
     def _collect(task_map: dict[str, asyncio.Task[ModelResult | None]]) -> None:
         for model_id, task in task_map.items():
@@ -566,7 +584,7 @@ async def _run_model_ladder(
 
         if results and submitted is None:
             ordered = list(results.keys())
-            await _submit(
+            provisional_comment_text = await _submit(
                 question=question,
                 kind=kind,
                 results=results,
@@ -586,6 +604,10 @@ async def _run_model_ladder(
             for task in [*tasks.values(), *duplicate_tasks.values()]:
                 if not task.done():
                     task.cancel()
+            if submitted == "provisional":
+                assert provisional_comment_text is not None
+                await deps.metaculus.post_comment(question, provisional_comment_text)
+                deps.ledger.mark_comment_posted(run_id, "provisional")
             break
 
         if now >= soft_deadline:
