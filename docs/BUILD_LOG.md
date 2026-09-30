@@ -444,3 +444,13 @@ Decisions (defaults in force until answered):
   bot bug; denser cron cannot fix it.
 - **Hatim added to the HANDOFF:** full rationales kept in a dossier (s5.6) and
   a model list kept current, possibly by a separate workflow (s5.7).
+- **v2 fix (Hatim chose self-chaining shifts** over v1 dispatching v2 or an
+  external pinger): vezocontrol `28bdfac`. Each run of
+  `run_bot_on_tournament.yaml` is a ~5 h shift: poetry install once, then
+  `main.py` every 5 min (the template skips questions it already forecast)
+  until 300 min, then it dispatches its successor. A `guard` job skips
+  scheduled runs while a shift is active; a job-level concurrency group stops
+  a successor from overlapping its predecessor. `main.py` untouched, so v2
+  stays the unmodified-template control. First shift dispatched by hand,
+  run `36693458833`.
+- **`z-ai/glm-5.2:free` disabled** (`289234e`, Hatim).

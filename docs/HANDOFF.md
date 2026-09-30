@@ -17,7 +17,7 @@ tournament question: none has been open since it went live (see s3).
 |---|---|---|
 | betomcat (v1, public `Enhso/betomcat`) | `a055eff` on `main` | Host shifts chain every ~5.5 h. Today's commits (below) are pushed but only run from the first shift started after ~17:40 UTC 2026-09-25. |
 | IW (private `Enhso/iw`) | `1c3fe01` on `main` | Checked out by every shift through the deploy key. Hatim's unstaged `prompt.txt` edit: leave it, never stage it. |
-| vezocontrol (v2, public `Enhso/vezocontrol`) | `c045735` | Template bot, the control. Its recent scheduled runs all succeed (checked 2026-09-25). |
+| vezocontrol (v2, public `Enhso/vezocontrol`) | `28bdfac` | Template bot, the control. Since 2026-09-30 it runs as self-chaining ~5 h shifts polling `main.py` every 5 min (first shift `36693458833`, dispatched by hand); forecasting code unchanged. |
 
 Committed 2026-09-25 (details in BUILD_LOG "2026-09-25"):
 
@@ -66,10 +66,12 @@ These are deployed but not yet observed running. Do them before new work.
    `runs.degraded` should be 0. If it is 1, the pipeline fell back to direct
    AskNews: find the cause in the shift log (IW 502s are logged by
    `betomcat.research` as redacted; the iw-server stderr is in the job log).
-5. **v2's first short comment** (still open from 2026-09-24): the next
-   vezocontrol run that forecasts a question posts through `c045735`; check the
-   comment is the `# Rationale` form and the `forecast-reports-*` artifact
-   holds the full report.
+5. **v2's shift chain.** Each shift should start within a minute or two of
+   the previous one ending (`workflow_dispatch` runs of
+   `run_bot_on_tournament.yaml`); scheduled runs should end in seconds (guard
+   skips). Every FE Fall and MiniBench question should get a vezocontrol
+   forecast within ~10 min of opening. Its first short comment was posted on
+   45848 (2026-09-29); the `# Rationale` form is not yet checked.
 
 ## 3. Calendar and deadlines
 
@@ -330,8 +332,9 @@ rest is the lead's proposal with reasons.
   (`iw/python/src/iw_research/llm.py`). One batch hit it on 2026-09-25. Since
   `1c3fe01` that batch is dropped, not the whole job; if many batches time
   out, raise the timeout or lower effort for the worker's model.
-- **GitHub drops scheduled runs** (v2's 20-min cron fired 7 times in 25 h).
-  v1 self-chains, so the schedule only restarts a broken chain.
+- **GitHub drops scheduled runs** (v2's 20-min cron fired 7 times in 25 h,
+  ~5 a day on 29 Sep). v1 and, since 2026-09-30, v2 self-chain, so the
+  schedule only restarts a broken chain, possibly hours late.
 - **Cost depends on reasoning effort**, not only on price: output tokens grow
   up to ~15x from low to max effort. The guard uses measured cost per model
   once the ledger has it, priced estimates until then.
