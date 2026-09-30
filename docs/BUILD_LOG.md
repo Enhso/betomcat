@@ -521,3 +521,12 @@ Decisions (defaults in force until answered):
   catching a question, the synthesized comment, Flash on the direct route,
   round mode (HANDOFF s2 a-e). The decrypted state copy in `data/` was
   deleted.
+- **Retro (2026-09-30), Hatim approved E1-E5 for the next session**
+  (HANDOFF s2b): CI plus a test gate in `host.yml`; a builder permission
+  allowlist that includes edits and the check commands (read-only is not
+  enough, Hatim; the lead agrees: the stalled builder needed to write and
+  test); `betomcat status`; `CLAUDE.md` rewritten as navigation (local file
+  only) with rules moved to `CODING_STANDARDS.md`; this handoff slimmed. The
+  s8 comments recipe was wrong (`on_post=` ignored) and is corrected. Out of
+  repo: the SuccessClaimGate wording false positives and the golden-specs
+  review are Hatim's.

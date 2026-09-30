@@ -1,9 +1,10 @@
 # Handoff: state of the deployment and what remains
 
 Updated 2026-09-30 (end of session). **Next session, in order:** s2 items
-a-e (verify today's pushes live), then build s5.3 (weights, fully decided),
-then s5.1 stage 2 (referee, fully decided), then ask Hatim the open
-decisions of s5.7 before building it. Read this first, then
+a-e (verify today's pushes live), then the environment fixes of s2b (E1-E5,
+retro 2026-09-30, all approved by Hatim), then build s5.3 (weights, fully
+decided), then s5.1 stage 2 (referee, fully decided), then ask Hatim the
+open decisions of s5.7 before building it. Read this first, then
 `docs/BUILD_LOG.md` (full trace, every decision and why), `docs/contracts.md`
 (IW <-> bot interfaces, comment layout), `docs/spec.md` and `docs/brief.md`
 (intent). This file lists the state and everything still open, in the order
@@ -109,6 +110,75 @@ These are deployed but not yet observed running. Do them before new work.
    skips). Every FE Fall and MiniBench question should get a vezocontrol
    forecast within ~10 min of opening. Its first short comment was posted on
    45848 (2026-09-29); the `# Rationale` form is not yet checked.
+
+## 2b. Environment fixes (retro 2026-09-30, approved by Hatim)
+
+Do these before new features: E1 protects the live bot, E2 unblocks
+builders, E3 and E5 make every later session cheaper. Builders do the
+mechanical parts; the lead verifies as usual.
+
+- **E1. Tests gate every push and every shift.** Today no CI runs the check
+  suite in either repo, and `host.yml` forecasts from whatever is on `main`,
+  so a broken commit goes straight into live forecasting. Add `ci.yml` to
+  betomcat (the four-command suite, s1) and to IW (Rust: fmt, clippy
+  `-D warnings`, test; Python: the four commands in `python/`), on push and
+  PR. In `host.yml`, run `uv run pytest -q` (~10 s) after `uv sync`, before
+  the host step: a red suite fails the job before any forecast, and the
+  existing `if: always()` successor dispatch still keeps the chain alive
+  (check that it does not then loop every few seconds on a red `main`: add a
+  back-off or skip the dispatch when the test step failed and let the `*/30`
+  backstop retry).
+- **E2. Builders can actually build.** On 2026-09-30 a builder produced
+  nothing for 28 min after the session left auto mode: its tool calls
+  waited on approval prompts nobody saw. Read-only is not enough (Hatim,
+  agreed by the lead): a builder must edit files and run the checks. Add a
+  project `.claude/settings.json` allowlist, scoped per repo: Edit/Write
+  inside the repo; `uv run ruff|mypy|pytest`, `uv sync`; `cargo fmt|clippy|test|build`
+  (IW); read-only git (`status`, `diff`, `log`, `show`). Keep out: `git
+  commit`/`push`, `gh`, writes to secrets, anything posting to Metaculus or
+  dispatching workflows (those stay with the lead or Hatim). The
+  `fewer-permission-prompts` skill can mine this session's transcripts for
+  the exact command shapes.
+- **E3. `betomcat status`, one read-only command for session starts.** The
+  2026-09-30 opening check took ~20 hand-rolled curl/sqlite/log calls, and
+  the old comments recipe was wrong (`on_post=` is ignored by
+  `/api/comments/`; `post=` alone returns only public comments; what works
+  is `author=<id>&is_private=true`, filtered client-side by `on_post`). One
+  command should print: recent host runs (event, status, head sha, gaps
+  between shifts) and vezocontrol runs; per recent question, vezo3's and
+  vezocontrol's forecasts and comments with a private/public flag (tokens
+  from `.env`: `METACULUS_TOKEN`, `V2_METACULUS_TOKEN`; vezo3 is user
+  308852); from the ledger (via `pull-state` into a temp dir it deletes
+  afterwards): runs, statuses, per-model failures and errors, cost per
+  question, `degraded`. Never print probabilities or rationales of open
+  questions if its output could ever reach a public log. Then replace the
+  s8 prose recipes with a pointer to it.
+- **E4. `CLAUDE.md` becomes navigation (local file only).** `betomcat/CLAUDE.md`
+  (171 lines) is a generic Python style guide that never mentions this
+  file. Rewrite it with the `writing-for-agents` skill as a short pointer
+  file: read `docs/HANDOFF.md` first; `docs/BUILD_LOG.md` for decisions;
+  `docs/contracts.md` for IW; the check command; public repo, so redacted
+  logs only; never stage IW's `prompt.txt`; builders never commit. Move the
+  code rules it keeps into `CODING_STANDARDS.md` (read at review, not every
+  turn), dropping no-ops (the "$100 fine", "meaningful names"). Leave
+  `~/projects/CLAUDE.md` alone (Hatim: copy-pasted, not meant to be used),
+  but note that Claude Code still loads it into every session under
+  `~/projects/` (it was in this session's context); Hatim decides whether to
+  move it out of the path.
+- **E5. Slim this file.** This handoff is 540+ lines and BUILD_LOG 520+.
+  Keep here only: where things stand, verify-first, calendar, what is next
+  with its brief, open decisions, known risks, how the build is run (target
+  ~150-200 lines). Migrate: done items (5.0, the decided history of 5.1/5.3
+  once built) to BUILD_LOG; recipes (s8) to the `betomcat status` help text
+  or a short `docs/RECIPES.md`; key facts (s9) to `docs/FACTS.md` if they
+  outgrow a screen, else keep. Every moved block leaves one pointer line.
+
+Outside this repo (noted, not for the betomcat session): the LifeOS Stop
+hook `SuccessClaimGate` fires on wording ("live", "verified") for non-web
+work, twice this session; Hatim may streamline the LifeOS/Sawby harness.
+The global `~/.claude/CLAUDE.md` pointer to `~/.womm-skills/golden-specs/`
+(FastAPI/Neo4j/React specs from another project and older models) has no
+trigger condition; Hatim wants the specs reviewed and streamlined.
 
 ## 3. Calendar and deadlines
 
@@ -477,12 +547,15 @@ Original notes:
 - **Live state mid-shift:** `GITHUB_REPOSITORY=Enhso/betomcat
   GITHUB_TOKEN=$GITHUB_ADMIN_TOKEN uv run betomcat pull-state --out-dir <tmp>`
   (with `.env` loaded for `STATE_KEY`), then `sqlite3 <tmp>/ledger.sqlite`.
-- **What vezo3 posted:** the website only shows the logged-in account's
-  forecasts and its own private comments, so Hatim cannot see vezo3's from his
-  account. Use the API with `METACULUS_TOKEN`: `GET /api/posts/<post>/`
-  (`question.my_forecasts.history`) and
-  `GET /api/comments/?author=308852&is_private=true&on_post=<post>`. The posts
-  *list* endpoint does not fill `my_forecasts`; the detail endpoint does.
+- **What vezo3 posted:** Hatim has the bot accounts' logins (2026-09-30), so
+  he can check himself; from here, use the API with `METACULUS_TOKEN`:
+  `GET /api/posts/?forecaster_id=308852` lists the posts vezo3 forecast;
+  `GET /api/posts/<post>/` gives `question.my_forecasts.history` (the posts
+  *list* endpoint does not fill it). Comments: `on_post=` is IGNORED by
+  `/api/comments/`, and `author=308852` alone returns only public ones: use
+  `GET /api/comments/?author=308852&is_private=true` plus
+  `?author=308852&limit=100` for public ones, and filter by each result's
+  `on_post` client-side (2026-09-30).
   Metaculus rate-limits bursts (~40 quick requests triggered errors).
 - **Metaculus from Python:** `urllib` gets a 403 (Cloudflare); use `curl`,
   `httpx` or `requests` with normal headers.
