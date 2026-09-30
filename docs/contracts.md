@@ -51,6 +51,11 @@ the provider default look-back (AskNews: last 30 days of news); `max_news` 12,
 clamps news requests to 10 per query. Rust sets `news_since` = the family's `last_seen` when the family has
 prior history (gap fill, spec s1), else null.
 
+Optional `"extra_queries": [str]` (IW `adf3f72`, 2026-09-30; for the referee's
+targeted re-research, HANDOFF s5.1): worker type `list[str]`, default `[]`,
+NOT nullable (an explicit `null` fails validation), so Rust omits the key
+when there are none. Each entry adds one AskNews news search (B1).
+
 ### A2. `research` response (stdout) = ExtractionPayload v2
 
 `schema_version` becomes `2`. Everything in v1 stays; additions:
@@ -120,7 +125,9 @@ not "ECB October 2026 cut").
   `return_type=dicts`, `method=nl`, `strategy=default`, and either
   `start_timestamp` (unix seconds, from `news_since`) or `hours_back=720`.
   Two queries per question: the question title, and a keyword query built from
-  it. Deduplicate by URL. Use each article's full text if present, else summary.
+  it, plus one per `extra_queries` entry (verbatim, same window and clamp).
+  Deduplicate by URL across all queries (first occurrence wins). Use each
+  article's full text if present, else summary.
 - `asknews_wiki`: `GET https://api.asknews.app/v1/wiki/search`, params `query`,
   `n_results`. Keep `title`, `url`, content/summary.
 - `wikipedia`, `arxiv`: unchanged, used only as the no-key default.
@@ -198,7 +205,11 @@ needed (id `fam:<slug of label>`, suffixed `-2`, `-3` on collision), follows
 
 ### C2. `POST /api/research`
 
-Body: A1's fields minus `family`, plus `"family_id": str|null`. Rust resolves the
+Body: A1's fields minus `family`, plus `"family_id": str|null`. `extra_queries`
+is `[str]|null` here: absent, `null` or `[]` mean none; at most 3 entries, each
+non-blank and at most 200 characters after trimming (entries are trimmed),
+else `422` with `{"error": "invalid payload: extra_queries ..."}` before any
+worker runs. Rust resolves the
 family (and its `last_seen`), sets `news_since`, runs the worker, validates and
 ingests the payload atomically (sources as versioned documents, content into
 `blob`), updates the family's `last_seen` to the ingest time, and returns:

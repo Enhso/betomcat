@@ -1,6 +1,9 @@
 # Handoff: state of the deployment and what remains
 
-Rewritten 2026-09-25 (end of session). Read this first, then
+Updated 2026-09-30 (end of session). **Next session, in order:** s2 items
+a-e (verify today's pushes live), then build s5.3 (weights, fully decided),
+then s5.1 stage 2 (referee, fully decided), then ask Hatim the open
+decisions of s5.7 before building it. Read this first, then
 `docs/BUILD_LOG.md` (full trace, every decision and why), `docs/contracts.md`
 (IW <-> bot interfaces, comment layout), `docs/spec.md` and `docs/brief.md`
 (intent). This file lists the state and everything still open, in the order
@@ -18,7 +21,7 @@ the first shift started after ~10:30 UTC 2026-09-30.
 | Repo | Commit | State |
 |---|---|---|
 | betomcat (v1, public `Enhso/betomcat`) | `f96a291` on `main` | Host shifts chain every ~5.5 h. |
-| IW (private `Enhso/iw`) | `1c3fe01` on `main` | Checked out by every shift through the deploy key. Hatim's unstaged `prompt.txt` edit: leave it, never stage it. |
+| IW (private `Enhso/iw`) | `adf3f72` on `main` | Checked out by every shift through the deploy key. `adf3f72` (2026-09-30) adds optional `extra_queries` to `POST /api/research` (referee stage 1; unused until 5.1 stage 2). Hatim's unstaged `prompt.txt` edit: leave it, never stage it. |
 | vezocontrol (v2, public `Enhso/vezocontrol`) | `28bdfac` | Template bot, the control. Since 2026-09-30 it runs as self-chaining ~5 h shifts polling `main.py` every 5 min (first shift `36693458833`, dispatched by hand); forecasting code unchanged. |
 
 Committed 2026-09-30 (details in BUILD_LOG "2026-09-30"):
@@ -49,8 +52,9 @@ deploy key for betomcat.
 
 Check suite (betomcat, 306 tests):
 `uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src && uv run pytest -q`
-Check suite (IW worker, 179 tests), from `~/projects/iw/python`: the same four
-commands.
+Check suite (IW worker, 187 tests), from `~/projects/iw/python`: the same four
+commands. IW Rust (115 tests), from `~/projects/iw`: `cargo fmt --check &&
+cargo clippy --all-targets -- -D warnings && cargo test`.
 
 ## 2. Verify first (start of the next session)
 
@@ -141,12 +145,11 @@ These are deployed but not yet observed running. Do them before new work.
 
 ## 5. Not built yet (in proposed priority order)
 
-The order changed on 2026-09-25: the weight update was first because MiniBench
-round 1 was supposed to feed it from 1 Oct, but v1 has no forecasts in round 1,
-so there is nothing for it to score before mid-October. The referee and
-personal history improve every forecast from now on. 5.0 was added by Hatim
-at the end of the session as the next item. **Hatim decides the order**; the
-rest is the lead's proposal with reasons.
+**Order (2026-09-30, left to the lead by Hatim, most crux-y first):** 5.0
+done; 5.3 weights next (must exist before MiniBench round 2 resolves
+~15-19 Oct); 5.1 stage 2 referee; 5.7 model list; then 5.6, 5.2, 5.4, 5.5.
+5.3 and 5.1 have every decision made; the others still have open decisions
+that go to Hatim before any building (his rule).
 
 ### 5.0 A fuller rationale in the posted comment -- DONE 2026-09-30 (`f96a291`)
 
@@ -203,35 +206,59 @@ original brief follows for reference.
 - **Check before shipping:** a local dry run (s8) prints the comment; compare
   old and new on the same bot-testing-area question and show Hatim.
 
-### 5.1 Referee gate (spec s5) -- proposed after 5.0
+### 5.1 Referee gate (spec s5) -- DESIGN DECIDED 2026-09-30, stage 2 next
 
-- **What:** when the two drawn models disagree past spec s5's bars (binary:
-  |p_a - p_b| > 0.15; MC: total variation distance; numeric: medians more
-  than 0.25 of the range apart; see `_maybe_referee` in `pipeline.py`), a cheap-tier model classifies *why*
-  (stale info, genuine uncertainty, misread resolution criteria, ...). If time
-  remains before the soft deadline, re-run research and re-forecast **both**
-  models (Hatim approved the extra cost, BUILD_LOG 2026-09-22). The
-  disagreement type is logged and goes to the digest.
-- **Hard rule (spec s5):** it never overrides, excludes or adjusts the
-  weighted-average number. A misfiring referee must never corrupt a
-  submission.
-- **Current state:** `default_referee` is a no-op stub, and `_maybe_referee`
-  runs *after* the final is submitted (inside `_submit`), so today it could
-  only label. Re-research needs the call moved to the point where both results
-  are in but before the final is posted (the provisional already protects
-  against a miss). That is a change to the ladder's shape in
-  `_run_model_ladder`: present it to Hatim before building.
-- **Cost:** the classification is cheap-tier (spec s5: frontier spend only on
-  the two forecast calls; re-forecasting the two drawn models is those same
-  calls again). A re-forecast roughly doubles the cost of a disagreeing
-  question (~$0.20 -> ~$0.40 average).
-- **Open questions for Hatim:** which cheap model classifies (Jev fits the
-  "typed gate" role in the brief; gpt-6-luna is the IW default), the category
-  list, and whether re-research reuses the same IW query or a targeted one
-  built from the disagreement type.
-- **Tests:** the fake-clock harness in `tests/test_pipeline.py` already drives
-  the ladder; add cases for diverge -> re-forecast before soft, diverge after
-  soft -> label only, referee failure -> final unchanged.
+All design decisions are Hatim's (BUILD_LOG 2026-09-30); nothing is open.
+Stage 1 (IW `extra_queries`) was built on 2026-09-30 (s1 table). **Stage 2
+is the next build**: brief one builder with this section.
+
+- **Trigger (unchanged):** `_maybe_referee`'s divergence bars in
+  `pipeline.py` (binary |p_a - p_b| > 0.15; MC total variation distance;
+  numeric medians more than 0.25 of the range apart). Kennedy (Q45844,
+  24% vs 4%) would have fired.
+- **Ladder change (approved):** today the final posts the moment both models
+  are in and the referee stub runs after, inside `_submit`. New shape in
+  `_run_model_ladder`: when both are in, diverge, and `now < soft`: post their
+  weighted average as a *provisional* (no comment), then classify. If the
+  class triggers a re-run: targeted re-research, then re-forecast **both**
+  drawn models; the final is the weighted average of the two re-forecasts
+  (same frozen weights). If the re-run fails, is not triggered, or soft/hard
+  arrives first, the first average stands and its comment is posted as the
+  provisional's is today (at hard) -- or post it as the final right away when
+  no re-run is triggered. Hard rule (spec s5): the referee never overrides,
+  excludes or adjusts the weighted-average arithmetic; it only decides
+  whether a second round of forecasts happens. A referee exception must
+  never block or corrupt a submission (fail open to today's behaviour).
+- **Classifier: Jev (TypeSafe)**, not an LLM. One `choice` question over
+  the state {question, resolution criteria, both rationales}: categories
+  `stale_or_missing_information`, `misread_resolution_criteria`,
+  `different_base_rate`, `genuine_uncertainty`, `other`. Client shape: copy
+  `iw/python/src/iw_research/jev.py` (`POST https://api.typesafe.ai/v1/systemone`,
+  body `{state, model: "jev-latest", questions: {id: {type: "choice",
+  instructions, criteria: {category: description}}}}`, answers under
+  `answers`; one retry on 429/5xx). `TYPESAFE_API_KEY` is in `.env`, is an
+  Actions secret, and `host.yml` already passes it to the shift.
+- **Re-run only for** `stale_or_missing_information` and
+  `misread_resolution_criteria` (Hatim). Other classes are labeled only.
+- **Targeted research (full build, Hatim):** when a re-run triggers, one
+  `openai/gpt-6-luna` call (like `rationale.py`'s `RATIONALE_MODEL`, ~$0.004)
+  writes 1-3 search queries aimed at the disagreement plus a one-line
+  diagnosis. betomcat's `research.py` sends them as `extra_queries` on
+  `POST /api/research` (IW validates: at most 3, non-empty, <= 200 chars).
+  IW's family `last_seen` means the second research only pulls news newer
+  than the first. If Luna fails: re-research without extra queries and a
+  fixed diagnosis sentence per class.
+- **Re-forecast prompt:** each model gets the new research and the diagnosis
+  line, **never the other model's rationale** (avoids herding).
+- **Logging:** store the class, whether a re-run happened, and its outcome
+  per run (a small ledger table, `CREATE TABLE IF NOT EXISTS`), for the
+  digest (5.4) and review. Public logs: class names and ids only.
+- **Cost:** doubles on re-run questions (~$0.53 -> ~$1.06); the MiniBench
+  round allowance covers it.
+- **Tests:** the fake-clock harness in `tests/test_pipeline.py`: diverge ->
+  re-run before soft -> final from re-forecasts; diverge after soft -> label
+  only; class not triggering -> final from first average; Jev failure / Luna
+  failure / IW failure -> first average stands; exactly one comment still.
 
 ### 5.2 Personal-history backfill (spec s3)
 
@@ -258,7 +285,50 @@ original brief follows for reference.
 - **Privacy:** the repo and its logs are public; Hatim's forecasts must never
   be logged.
 
-### 5.3 Daily weight update (spec s5)
+### 5.3 Daily weight update (spec s5) -- DECIDED 2026-09-30, build FIRST next session
+
+**Status:** all decisions made (below); a builder was started on 2026-09-30
+but produced no code (it stalled when the session left auto mode) and was
+stopped. Nothing of it is in the repo. Needed before MiniBench round 2
+resolves (~15-19 Oct). Launch one builder with this brief:
+
+- **Decided (Hatim):** score = the model's own log score minus the community
+  prediction's (CP) log score at close, per resolved question (peer-style,
+  removes question difficulty); baseline score (vs uniform) when no CP;
+  annulled/ambiguous skipped. Neutral (s = 0) below 10 scored questions.
+  Mapping: s_i = mean * n_i / (n_i + 10); raw w_i = exp(s_i / T), T = 0.2
+  (lead's choice); normalize to mean 1.0 over ENABLED pool models (unscored
+  ones get s = 0); floor at 0.5. Constants at module level. Removals only
+  suggested (digest), never automatic.
+- **Scoring details (lead):** binary ln p(outcome); MC ln p[option]; numeric,
+  discrete and date: 201-point CDF -> 200 inner bin masses plus the tails
+  `cdf[0]` / `1 - cdf[-1]`, locate the resolution's bin with the question's
+  scaling (range, `zero_point` for log scale), ln of that mass; tail
+  resolutions use the tail masses. Floor masses at 1e-4, clip each per-question
+  relative score to [-5, 5]. Use each model's LAST `ok` forecast per run.
+- **Data source:** `GET /api/posts/<post id>/` (post id from `questions.url`):
+  resolution, scheduled resolve time, scaling, CP at close (check
+  `question.aggregations.recency_weighted` `latest` vs the `history` entry
+  covering the close; capture real fixtures from resolved questions of the
+  past MiniBench round, tournament 33122, into `tests/fixtures/`). Before
+  hand-rolling the parsing, look at how forecasting-tools' review tooling
+  reads resolutions and scores (vezocontrol's `bot-review` integration, and
+  `.claude/skills/review-bot/SKILL.md` here): the stopped builder was reading
+  it as a possible reuse. Metaculus rate-limits bursts: pause >= 1 s.
+- **Ledger:** `resolutions` cache (question_id PK, status, resolution,
+  cp_json, scaling_json, scheduled_resolve_time, fetched_at): fetch a
+  resolved question once; refetch an unresolved one only after its scheduled
+  resolve time or 7 days after the last fetch. `model_scores` (run_id,
+  model_id, question_id, score, method, scored_at; unique per run+model) for
+  audit and the digest. `CREATE TABLE IF NOT EXISTS` (old snapshots must open).
+- **Host:** a periodic task beside `_periodic_snapshot`: at shift start and
+  hourly, run the update only if `weights.json`'s `updated_at` is not today
+  (UTC); snapshot on success; log and retry next tick on failure; never block
+  the shift. Log counts only (public logs). CLI: `betomcat update-weights`.
+- **Files:** new `src/betomcat/weights.py`, `tests/test_weights.py`,
+  `tests/fixtures/`; edits to `ledger.py`, `host.py`, `cli.py` and their tests.
+
+Original notes:
 
 - **What:** each model's selection weight follows its performance on resolved
   questions; uniform until enough resolutions exist. The draw and the
@@ -346,9 +416,10 @@ original brief follows for reference.
 ## 6. Decisions pending with Hatim
 
 1. **Next budget horizon, before 19 Oct.** His rule: MiniBench round 2 first
-   (about half the ~$99), the rest to FE Fall until an extension. Measured and
-   priced costs: ~$0.20 per question on average (two calls), ~$0.90 worst case
-   (Fable + Astra); a 60-question round is ~$12 expected. If the credit is
+   (about half the ~$99), the rest to FE Fall until an extension. Measured on
+   the first three live questions: ~$0.53 per question (a floor: failed
+   attempts carry no cost), so a 60-question round is ~$32; round 2 is paced
+   by the $50 round allowance, not the daily rule. If the credit is
    renewed, the horizon can follow the renewal period. The constant is
    `DEFAULT_BUDGET_WINDOW_END` in `src/betomcat/config.py` (env
    `BUDGET_WINDOW_END` overrides it; the workflow does not set it).
@@ -357,8 +428,8 @@ original brief follows for reference.
    first: 5.3 weights (must exist before round 2 resolves ~15-19 Oct), 5.1
    referee, 5.7 model list, then 5.6, 5.2, 5.4, 5.5. Every open decision
    inside an item still goes to Hatim before building.
-4. **Referee design** (s5.1: ladder change, classifier model, categories).
-5. **Weight scoring rule** (s5.3).
+4. ~~Referee design~~ (s5.1): decided 2026-09-30, see s5.1.
+5. ~~Weight scoring rule~~ (s5.3): decided 2026-09-30 (BUILD_LOG).
 6. **Rationale dossier** (s5.6): IW dossier or ledger export.
 7. **Model-list workflow** (s5.7): PR or issue, cadence, candidate rule.
 
@@ -368,8 +439,11 @@ original brief follows for reference.
   BYOK Google AI Studio key: Gemma 429s on a 16k tokens/min free-tier quota
   shared with v2, Gemma `500 INTERNAL` on ~55% of large prompts,
   gemini-3.8-flash `503 high demand` even on tiny prompts (2026-09-24). Gemma
-  is disabled in v1 and out of IW's worker chain; the replacement draw covers
-  Flash and 3.1 Pro.
+  is disabled in v1 and out of IW's worker chain. Since 2026-09-30 Flash
+  runs on Hatim's own AI Studio key through the direct Google route (also
+  free tier: per-minute/day limits unknown, a 429 falls to the replacement
+  draw), and 3.1 Pro is disabled (free-tier Pro quota is 0 on any key; it
+  needs a billing-enabled Google key).
 - **IW worker timeout.** Each extraction call has a 120 s httpx timeout
   (`iw/python/src/iw_research/llm.py`). One batch hit it on 2026-09-25. Since
   `1c3fe01` that batch is dropped, not the whole job; if many batches time
@@ -457,7 +531,11 @@ parallel** (Hatim, 2026-09-25: one gives no speedup, three risks the usage
 limit); work iteratively so a limit never loses logs or state. Sonnet builders
 stalled twice on 2026-09-25 (stream watchdog, no progress for 600 s) while
 writing tests: keep briefs small, and if a builder stalls twice, the lead
-finishes the work. Hatim has final say on major architectural and tradecraft
+finishes the work. On 2026-09-30 a builder produced nothing after the session
+left auto mode (its tool calls presumably waited on approvals nobody saw):
+check builders' file mtimes, and stop one that writes nothing for ~15 min.
+Builders cannot write repo secrets or post to Metaculus (the classifier
+refuses); Hatim does those himself. Hatim has final say on major architectural and tradecraft
 decisions and can be persuaded with argued tradeoffs. Every decision goes in
 `docs/BUILD_LOG.md`. Replies to Hatim follow the LifeOS format (banner,
 closer, at most 15 prose lines unless he asks for depth).

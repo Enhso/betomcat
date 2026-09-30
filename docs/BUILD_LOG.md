@@ -487,3 +487,37 @@ Decisions (defaults in force until answered):
   >= $0.05 a call is excluded at once (a cliff, not the graduated bands). Kept
   deliberately: the graduated bands would allow up to 2x the budget, i.e. all
   of the remaining credit, against Hatim's "about half for round 2".
+- **5.3 weights, Hatim's decisions:** score = each model's own log score minus
+  the community prediction's at close (baseline score when no CP), annulled
+  skipped; a model stays neutral below 10 scored questions; mapping = shrunk
+  mean (n / (n + 10)), softmax at T = 0.2 (lead's choice, one constant),
+  normalized to mean 1 over enabled models, floored at 0.5. Removals only
+  suggested. Builder started; runs daily inside the host shift.
+- **5.1 referee, Hatim's decisions:** ladder change approved (when both
+  forecasts are in and diverge past spec s5's bars with time before soft:
+  post their weighted average as a provisional, classify, maybe re-run; the
+  final is the weighted average of the re-forecasts, else the first average
+  stands). Classifier: Jev (TypeSafe), a choice question over stale/missing
+  information, misread resolution criteria, different base rate, genuine
+  uncertainty, other. Re-forecast only for information and criteria; the
+  rest are labeled. Full targeted build: when a re-forecast triggers, Luna
+  writes 1-3 search queries plus a one-line diagnosis; IW gains an optional
+  `extra_queries` research field (at most 3); the models see the new research
+  and the diagnosis, never each other's rationale. Stage 1 (IW field) started;
+  stage 2 (betomcat referee + ladder) after 5.3 lands (both touch ledger.py).
+- **IW `adf3f72` (referee stage 1):** optional `extra_queries` (<= 3, non-blank,
+  <= 200 chars, else 422 like the handler's other validation) on
+  `POST /api/research`; one extra AskNews news search per entry, same
+  `news_since` and 10-article clamp, deduplicated by URL across all queries.
+  Absent/empty/null = unchanged behaviour (Rust omits the field from the
+  worker JSON; the worker rejects an explicit null). Lead re-ran fmt, clippy,
+  115 Rust + 187 Python tests. `prompt.txt` left unstaged.
+- **5.3 builder stopped, nothing kept:** after ~28 min it had written no code
+  (the session left auto mode mid-run; it was reading how forecasting-tools'
+  review tooling parses resolutions). HANDOFF s5.3 now holds the full brief;
+  build it first next session.
+- **Session end (2026-09-30):** pushed betomcat up to the docs commit below,
+  IW `adf3f72`, vezocontrol `28bdfac`. Not yet observed live: v2's shifts
+  catching a question, the synthesized comment, Flash on the direct route,
+  round mode (HANDOFF s2 a-e). The decrypted state copy in `data/` was
+  deleted.
