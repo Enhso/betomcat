@@ -1,11 +1,14 @@
 """Private-comment and audit-report rendering (contracts.md s E).
 
-Both are pure functions over pipeline state -- no LLM authorship, nothing
-here calls out to anything. Metaculus penalizes long comments (Hatim,
-2026-09-24), so `render_comment` posts only a short per-model summary line
-under a hard character cap. `render_report` renders the full audit trail
-(every rationale, every claim, no truncation) for the ledger only -- it is
-never posted.
+All three renderers are pure functions over pipeline state -- nothing here
+calls out to anything, the LLM included. The posted comment takes one of two
+forms, both under the same hard character cap: `render_synthesized_comment`
+(the header plus one rationale paragraph, written elsewhere by
+`rationale.synthesize_rationale` and passed in) and `render_comment`, the
+fallback when no rationale is available (the header plus one short summary
+line per model, so a comment is never missing). `render_report` renders the
+full audit trail (every rationale, every claim, no truncation) for the ledger
+only -- it is never posted.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from dataclasses import dataclass, field
 from betomcat.pool import DrawResult
 from betomcat.research import ClaimView, HistoryItem
 
-COMMENT_MAX_CHARS = 1500
+COMMENT_MAX_CHARS = 2600
 
 
 def format_value(value: float | dict[str, float] | list[float]) -> str:
@@ -140,19 +143,39 @@ def _comment_bullet(mf: ModelForecastInfo) -> str:
     return f"- **{mf.model_id}**{value_part}: {mf.summary}"
 
 
-def render_comment(state: CommentState) -> str:
-    """Render the short private comment: header + one summary bullet per model.
-
-    Metaculus penalizes long comments (Hatim, 2026-09-24), so this carries
-    only each model's self-written summary line (already capped at 60 words by
-    `forecast.extract_summary`). `COMMENT_MAX_CHARS` is a backstop only.
-    """
+def _comment_header(state: CommentState) -> str:
     header = f"betomcat v{state.bot_version}, {state.kind} forecast"
     if state.degraded:
         header += ", degraded research"
+    return header
 
-    lines = [header] + [_comment_bullet(mf) for mf in state.model_forecasts]
-    text = "\n".join(lines)
+
+def _cap_comment(text: str) -> str:
     if len(text) > COMMENT_MAX_CHARS:
-        text = text[: COMMENT_MAX_CHARS - 4] + " ..."
+        return text[: COMMENT_MAX_CHARS - 4] + " ..."
     return text
+
+
+def render_comment(state: CommentState) -> str:
+    """Render the fallback comment: header + one summary bullet per model.
+
+    Posted only when no synthesized rationale is available. Metaculus
+    penalizes long comments (Hatim, 2026-09-24), so this carries only each
+    model's self-written summary line (already capped at 60 words by
+    `forecast.extract_summary`). `COMMENT_MAX_CHARS` is a backstop only.
+    """
+    lines = [_comment_header(state)] + [
+        _comment_bullet(mf) for mf in state.model_forecasts
+    ]
+    return _cap_comment("\n".join(lines))
+
+
+def render_synthesized_comment(state: CommentState, rationale: str) -> str:
+    """Render the comment as the header, a blank line, and one rationale paragraph.
+
+    Args:
+        state: The pipeline state the header is drawn from.
+        rationale: The synthesized rationale (at most 300 words). Its length is
+            not checked here; `COMMENT_MAX_CHARS` is a backstop only.
+    """
+    return _cap_comment(f"{_comment_header(state)}\n\n{rationale}")

@@ -9,6 +9,7 @@ from betomcat.comment import (
     format_value,
     render_comment,
     render_report,
+    render_synthesized_comment,
 )
 from betomcat.pool import DrawResult
 from betomcat.research import ClaimView, Evidence, HistoryItem
@@ -150,6 +151,50 @@ def test_render_comment_backstop_cap_holds_for_oversized_input() -> None:
     )
 
     text = render_comment(state)
+
+    assert len(text) == COMMENT_MAX_CHARS
+    assert text.endswith(" ...")
+
+
+# -- render_synthesized_comment (the posted comment when synthesis worked) --
+
+
+def test_render_synthesized_comment_is_header_blank_line_paragraph() -> None:
+    paragraph = "We forecast 52.5% because the base rate is low."
+
+    text = render_synthesized_comment(_state(), paragraph)
+
+    assert text == f"betomcat v1.0.0, final forecast\n\n{paragraph}"
+
+
+def test_render_synthesized_comment_flags_degraded_research_and_kind() -> None:
+    state = _state(kind="provisional", degraded=True)
+
+    text = render_synthesized_comment(state, "A paragraph.")
+
+    assert text.startswith(
+        "betomcat v1.0.0, provisional forecast, degraded research\n\n"
+    )
+
+
+def test_render_synthesized_comment_has_no_per_model_bullets() -> None:
+    text = render_synthesized_comment(_state(), "A paragraph.")
+
+    assert "model-a" not in text
+    assert "Anchored on the ECB base rate." not in text
+
+
+def test_render_synthesized_comment_never_cuts_a_300_word_paragraph() -> None:
+    paragraph = " ".join(["abcdefg"] * 300)
+
+    text = render_synthesized_comment(_state(), paragraph)
+
+    assert text.endswith(paragraph)
+    assert len(text) <= COMMENT_MAX_CHARS
+
+
+def test_render_synthesized_comment_backstop_cap_holds_for_oversized_input() -> None:
+    text = render_synthesized_comment(_state(), "x" * 5000)
 
     assert len(text) == COMMENT_MAX_CHARS
     assert text.endswith(" ...")

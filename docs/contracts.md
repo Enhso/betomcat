@@ -303,30 +303,68 @@ in-memory default stays for tests.
 
 ## E. betomcat private-comment layout (C3)
 
-Supersedes spec s9's comment layout per Hatim's 2026-09-24 decision: Metaculus
-penalizes long comments, so the posted comment carries only a short summary,
-not the audit report.
+Supersedes spec s9's comment layout per Hatim's 2026-09-24 decision (Metaculus
+penalizes long comments, so the posted comment is not the audit report) and
+his 2026-09-25 decision: the posted comment is one synthesized rationale of at
+most 300 words, not a summary line per model.
 
-Both `render_comment` and `render_report` (`comment.py`) are pure functions of
-pipeline state; no LLM authorship happens in either.
+The three renderers in `comment.py` (`render_synthesized_comment`,
+`render_comment`, `render_report`) are pure functions of pipeline state; none
+calls an LLM. The one LLM call is `rationale.synthesize_rationale`, which the
+pipeline runs just before it posts a comment.
 
-Each question gets exactly one posted comment (Hatim's 2026-09-25 decision):
-the comment is posted with the `final` submission only. If hard arrives with
-a `provisional` still standing (no `final` ever came), the `provisional`'s
-already-rendered comment is posted then instead.
+Each question gets exactly one posted comment (Hatim's 2026-09-25 decision),
+for the forecast that stands. A `final` submission posts it at once. A
+`provisional` submission withholds it: nothing is synthesized then, and only
+if hard arrives with the `provisional` still standing (no `final` ever came)
+is the comment composed and posted, right then.
 
-**Posted comment (`render_comment`)** -- what actually goes to Metaculus:
+**Synthesis (`rationale.py`)** -- one cheap-tier call (`RATIONALE_MODEL` =
+`openai/gpt-6-luna`, funded key, `max_tokens` 1500, `reasoning.effort` low)
+from both models' full rationales and the submitted (reconciled) forecast.
+The prompt asks for plain text in one voice, at most 300 words, no headings or
+lists: open with the submitted forecast, then the base rate or status quo
+anchored on, the two or three pieces of evidence that moved it (dated where
+the rationales give dates), where the models disagreed, and what would change
+the forecast. It may use only facts stated in the rationales.
+
+- The submitted forecast is put in words by `rationale.describe_forecast`:
+  binary as a percentage; multiple choice as the top three options with
+  percentages (and the mass shared by the rest); numeric, discrete and date as
+  the median and the 10th to 90th percentile range read off the reconciled CDF
+  with the question's bounds and `zero_point` (log scale). Mass outside an open
+  bound reads "below the lower bound (X)" / "above the upper bound (X)" where a
+  percentile falls beyond it.
+- A reply over 300 words is cut to 300 words and ends with `...`. A call error
+  (`LLMError`), a timeout, an empty reply or a reply under 40 words yields no
+  rationale, and the fallback comment (below) is posted instead.
+- Timeout: at `final`, 90 s (`PipelineDeps.rationale_timeout_final`) but never
+  past the hard deadline. For a `provisional` standing at hard, 45 s
+  (`rationale_timeout_provisional`) and never past 60 s before the question's
+  close (`rationale_close_margin`). With no time left the call is skipped.
+- The public logs carry only the question id and `rationale synthesis ok` /
+  `rationale synthesis failed, posting fallback`; never a rationale, the
+  comment text or a probability.
+
+**Posted comment, synthesized (`render_synthesized_comment`)**:
 
 1. Header line: `betomcat v{bot_version}, {kind} forecast[, degraded research]`.
+2. A blank line, then the rationale paragraph.
+
+**Posted comment, fallback (`render_comment`)** -- used whenever no rationale
+is available, so a comment is never missing:
+
+1. The same header line.
 2. One bullet per drawn model: `- **{model_id}** ({format_value(value)}): {summary}`.
    The `({...})` value part is omitted for numeric (list) values.
 
 `summary` is a `Summary:` line the forecasting model itself writes immediately
 before its final answer (`forecast.py`'s `SUMMARY_INSTRUCTION`, appended to
 every rendered prompt), extracted by `forecast.extract_summary` and capped at
-60 words. Hard cap: `COMMENT_MAX_CHARS` (1,500). If the full-length summaries
-don't fit, every summary is shortened by the same word count (word boundary,
-`" ..."`) rather than cutting the comment's tail.
+60 words.
+
+Both forms share the backstop `COMMENT_MAX_CHARS` (2,600, room for 300 words):
+a longer text is cut at the tail and ends with `" ..."`.
 
 **Audit report (`render_report`)** -- kept for logging only, never posted.
 Stored in `submissions.report` (inside the encrypted state snapshot, so it

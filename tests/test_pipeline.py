@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,6 +26,7 @@ from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, LLMResult
 from betomcat.pipeline import PipelineDeps, run_pipeline
 from betomcat.pool import DrawResult, ModelSpec, write_weights
+from betomcat.rationale import RATIONALE_MODEL
 from betomcat.research import FamilyClassification, ResearchResult
 
 POOL_MODELS = ["model-a", "model-b"]
@@ -60,12 +62,25 @@ class FakeClock:
 
 @dataclass
 class ScriptedLLM:
-    """Stands in for `OpenRouterClient`: dispatches to a per-model coroutine."""
+    """Stands in for `OpenRouterClient`: dispatches to a per-model coroutine.
+
+    Rationale-synthesis calls (`RATIONALE_MODEL`) are kept apart from the
+    forecast calls: they go to `rationale` (default: fail, so the fallback
+    comment is posted) and are logged in `rationale_calls` as `(prompt,
+    timeout)`, never in `calls`.
+    """
 
     scripts: dict[str, object]
+    rationale: Callable[[], Awaitable[LLMResult]] | None = None
     calls: list[str] = field(default_factory=list)
+    rationale_calls: list[tuple[str, float]] = field(default_factory=list)
 
     async def complete(self, model: object, prompt: str, timeout: float) -> LLMResult:
+        if model.id == RATIONALE_MODEL.id:  # type: ignore[attr-defined]
+            self.rationale_calls.append((prompt, timeout))
+            if self.rationale is None:
+                raise LLMError("no rationale script")
+            return await self.rationale()
         self.calls.append(model.id)  # type: ignore[attr-defined]
         return await self.scripts[model.id]()  # type: ignore[operator]
 
@@ -646,3 +661,237 @@ async def test_no_spares_behaves_exactly_as_before(tmp_path: Path) -> None:
         assert [s["kind"] for s in submissions] == ["provisional"]
     finally:
         ledger.close()
+
+
+# -- the synthesized comment (one rationale paragraph, fallback on failure) --
+
+RATIONALE_REPLY = " ".join(f"rationale{i}" for i in range(60))
+RATIONALE_A = "Model A saw the 2026-09-01 vote slip. Probability: 65%"
+RATIONALE_B = "Model B anchored on a 30% base rate. Probability: 40%"
+
+
+def _comment_texts(metaculus: FakeMetaculus) -> list[str]:
+    return [str(c[1]) for c in metaculus.calls if c[0] == "post_comment"]
+
+
+async def _rationale_reply() -> LLMResult:
+    return await _ok(RATIONALE_REPLY)
+
+
+async def test_final_posts_the_synthesized_comment_once(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)  # soft at +30s, hard at +35s
+    clock = FakeClock(now)
+    release_b = clock.release_at(now + timedelta(seconds=3))
+
+    async def script_a() -> LLMResult:
+        return await _ok(RATIONALE_A)
+
+    async def script_b() -> LLMResult:
+        await release_b.wait()
+        return await _ok(RATIONALE_B)
+
+    llm = ScriptedLLM(
+        {"model-a": script_a, "model-b": script_b}, rationale=_rationale_reply
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        assert outcome.status == "submitted"
+        assert [s["kind"] for s in ledger.get_submissions(outcome.run_id)] == [
+            "provisional",
+            "final",
+        ]
+        comments = _comment_texts(metaculus)
+        assert comments == [f"betomcat v1.0.0, final forecast\n\n{RATIONALE_REPLY}"]
+        # Only the final (not the earlier provisional) triggers synthesis.
+        assert len(llm.rationale_calls) == 1
+        prompt, timeout = llm.rationale_calls[0]
+        assert RATIONALE_A in prompt
+        assert RATIONALE_B in prompt
+        assert "52.5% probability of YES" in prompt  # the reconciled 0.65/0.40 mean
+        assert 0 < timeout <= 35.0  # never past hard (+35s)
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize(
+    "failing_reply",
+    [
+        pytest.param(LLMError("luna is down"), id="llm-error"),
+        pytest.param("too short to use", id="short-reply"),
+    ],
+)
+async def test_final_falls_back_to_the_summary_comment(
+    tmp_path: Path, failing_reply: LLMError | str
+) -> None:
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)
+    clock = FakeClock(now)
+
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def script_b() -> LLMResult:
+        return await _ok("Probability: 40%")
+
+    async def rationale() -> LLMResult:
+        if isinstance(failing_reply, LLMError):
+            raise failing_reply
+        return await _ok(failing_reply)
+
+    llm = ScriptedLLM({"model-a": script_a, "model-b": script_b}, rationale=rationale)
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        outcome = await run_pipeline(_question(close_time), deps)
+
+        assert outcome.status == "submitted"
+        comments = _comment_texts(metaculus)
+        assert len(comments) == 1
+        assert comments[0].startswith("betomcat v1.0.0, final forecast\n- **model-")
+        assert "too short to use" not in comments[0]
+        submissions = ledger.get_submissions(outcome.run_id)
+        assert [s["comment_posted"] for s in submissions] == [1]
+    finally:
+        ledger.close()
+
+
+async def test_final_skips_synthesis_when_hard_is_already_reached(
+    tmp_path: Path,
+) -> None:
+    """Results landing at or past hard get the fallback with no synthesis call."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)  # hard at +35s
+    clock = FakeClock(now)
+
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def script_b() -> LLMResult:
+        clock.now = now + timedelta(seconds=36)
+        return await _ok("Probability: 40%")
+
+    llm = ScriptedLLM(
+        {"model-a": script_a, "model-b": script_b}, rationale=_rationale_reply
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        await run_pipeline(_question(close_time), deps)
+
+        assert llm.rationale_calls == []
+        comments = _comment_texts(metaculus)
+        assert len(comments) == 1
+        assert "- **model-" in comments[0]
+    finally:
+        ledger.close()
+
+
+async def _run_provisional_standing_at_hard(
+    tmp_path: Path, llm: ScriptedLLM, margin: timedelta
+) -> tuple[FakeMetaculus, datetime, list[datetime]]:
+    """model-a answers; model-b never does, so the provisional stands at hard."""
+    now = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+    close_time = now + timedelta(seconds=40)  # hard at +35s
+    clock = FakeClock(now)
+    metaculus = FakeMetaculus()
+    comment_times: list[datetime] = []
+    post_comment = metaculus.post_comment
+
+    async def timed_post_comment(question: object, text: str) -> None:
+        comment_times.append(clock.now)
+        await post_comment(question, text)
+
+    metaculus.post_comment = timed_post_comment  # type: ignore[method-assign]
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+        deps.rationale_close_margin = margin
+        outcome = await run_pipeline(_question(close_time), deps)
+        assert outcome.status == "provisional"
+        assert ledger.get_submissions(outcome.run_id)[0]["comment_posted"] == 1
+    finally:
+        ledger.close()
+    return metaculus, close_time, comment_times
+
+
+async def _never() -> LLMResult:
+    await asyncio.Event().wait()
+    raise AssertionError("unreachable")
+
+
+async def test_provisional_standing_at_hard_posts_the_synthesized_comment(
+    tmp_path: Path,
+) -> None:
+    async def script_a() -> LLMResult:
+        return await _ok(RATIONALE_A)
+
+    llm = ScriptedLLM(
+        {"model-a": script_a, "model-b": _never}, rationale=_rationale_reply
+    )
+
+    metaculus, close_time, comment_times = await _run_provisional_standing_at_hard(
+        tmp_path, llm, margin=timedelta(seconds=2)
+    )
+
+    comments = _comment_texts(metaculus)
+    assert comments == [f"betomcat v1.0.0, provisional forecast\n\n{RATIONALE_REPLY}"]
+    assert len(llm.rationale_calls) == 1
+    prompt, timeout = llm.rationale_calls[0]
+    assert RATIONALE_A in prompt
+    assert "65% probability of YES" in prompt
+    # Synthesis runs at hard (+35s), and ends by close minus the margin (+38s).
+    assert 0 < timeout <= 3.0
+    assert comment_times[0] >= close_time - timedelta(seconds=5)
+
+
+async def test_provisional_at_hard_with_no_time_before_close_posts_fallback(
+    tmp_path: Path,
+) -> None:
+    """The default 60 s margin leaves no room in this 5 s hard-to-close window."""
+
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    llm = ScriptedLLM(
+        {"model-a": script_a, "model-b": _never}, rationale=_rationale_reply
+    )
+
+    metaculus, _close_time, _times = await _run_provisional_standing_at_hard(
+        tmp_path, llm, margin=timedelta(seconds=60)
+    )
+
+    assert llm.rationale_calls == []
+    comments = _comment_texts(metaculus)
+    assert len(comments) == 1
+    assert comments[0].startswith(
+        "betomcat v1.0.0, provisional forecast\n- **model-a**"
+    )
+
+
+async def test_provisional_at_hard_synthesis_failure_posts_fallback(
+    tmp_path: Path,
+) -> None:
+    async def script_a() -> LLMResult:
+        return await _ok("Probability: 65%")
+
+    async def rationale() -> LLMResult:
+        raise LLMError("luna is down")
+
+    llm = ScriptedLLM({"model-a": script_a, "model-b": _never}, rationale=rationale)
+
+    metaculus, _close_time, _times = await _run_provisional_standing_at_hard(
+        tmp_path, llm, margin=timedelta(seconds=2)
+    )
+
+    comments = _comment_texts(metaculus)
+    assert len(comments) == 1
+    assert comments[0].startswith(
+        "betomcat v1.0.0, provisional forecast\n- **model-a**"
+    )

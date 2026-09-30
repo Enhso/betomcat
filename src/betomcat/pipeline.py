@@ -14,8 +14,10 @@ Each question gets exactly one posted comment, coherent with whichever
 forecast stands at close (Hatim, 2026-09-25): a `provisional` submission
 posts its forecast but withholds its comment; the comment posts only
 with the `final` submission, or, if hard arrives with the provisional
-still standing and no final ever came, the kept provisional comment is
-posted right then.
+still standing and no final ever came, the comment is composed and posted
+right then. Composing means one cheap synthesis call for a single rationale
+paragraph (`rationale.py`); if it fails or there is no time for it, the
+per-model summary comment is posted instead, so a comment is never missing.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ from betomcat.comment import (
     ModelForecastInfo,
     render_comment,
     render_report,
+    render_synthesized_comment,
 )
 from betomcat.forecast import (
     ForecastParseError,
@@ -69,6 +72,7 @@ from betomcat.pool import (
     load_weights,
 )
 from betomcat.pool import draw as draw_pool
+from betomcat.rationale import ForecastValue, synthesize_rationale
 from betomcat.research import (
     FamilyClassification,
     IWClient,
@@ -116,6 +120,9 @@ class PipelineDeps:
     per_call_timeout: float = 180.0
     poll_interval: float = 1.0
     budget: BudgetGuard = field(default_factory=BudgetGuard)
+    rationale_timeout_final: float = 90.0
+    rationale_timeout_provisional: float = 45.0
+    rationale_close_margin: timedelta = timedelta(seconds=60)
 
 
 @dataclass(frozen=True)
@@ -123,6 +130,14 @@ class PipelineOutcome:
     status: RunStatus
     run_id: int | None
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class _SubmittedForecast:
+    """What `_submit` posted, kept so its comment can be composed later."""
+
+    state: CommentState
+    value: ForecastValue
 
 
 def _iso(dt: datetime) -> str:
@@ -362,6 +377,41 @@ async def _maybe_referee(
     return await deps.referee(kind=kind, model_a=a, model_b=b)
 
 
+async def _post_comment(
+    question: MetaculusQuestion,
+    kind: QuestionKind,
+    submitted: _SubmittedForecast,
+    timeout_cap: float,
+    not_after: datetime,
+    deps: PipelineDeps,
+) -> None:
+    """Post the question's one comment: a synthesized rationale, else the fallback.
+
+    The synthesis call gets `timeout_cap` seconds, shortened so it ends by
+    `not_after`; with no time left it is skipped. Logs only the question id --
+    the repo's Actions logs are public.
+    """
+    question_key = _question_key(question)
+    timeout = min(timeout_cap, (not_after - deps.clock()).total_seconds())
+    rationale = None
+    if timeout > 0:
+        rationale = await synthesize_rationale(
+            question,
+            kind,
+            submitted.value,
+            submitted.state.model_forecasts,
+            deps.llm,
+            timeout,
+        )
+    if rationale is None:
+        logger.info("rationale synthesis failed, posting fallback for %s", question_key)
+        text = render_comment(submitted.state)
+    else:
+        logger.info("rationale synthesis ok for %s", question_key)
+        text = render_synthesized_comment(submitted.state, rationale)
+    await deps.metaculus.post_comment(question, text)
+
+
 async def _submit(
     *,
     question: MetaculusQuestion,
@@ -375,17 +425,19 @@ async def _submit(
     run_id: int,
     submission_kind: Literal["provisional", "final"],
     pacing_note: str | None,
+    hard_deadline: datetime,
     deps: PipelineDeps,
-) -> str:
-    """Post the forecast, record the submission, and return the rendered comment.
+) -> _SubmittedForecast:
+    """Post the forecast, record the submission, and return what was submitted.
 
     Each question gets exactly one posted comment (Hatim, 2026-09-25): a
-    `final` submission posts its comment immediately; a `provisional`
-    submission withholds it, recording `comment_posted=False` -- the caller
-    posts the returned text later only if hard arrives with the provisional
+    `final` submission posts its comment immediately (synthesis, if any, ends
+    by `hard_deadline`); a `provisional` submission withholds it, recording
+    `comment_posted=False` -- the caller composes and posts it from the
+    returned `_SubmittedForecast` only if hard arrives with the provisional
     still standing.
     """
-    final_value: object
+    final_value: ForecastValue
     arithmetic: str
     if kind == "binary":
         binary_triples = [
@@ -440,10 +492,17 @@ async def _submit(
         history=research.history,
         claims=research.claims,
     )
-    comment_text = render_comment(comment_state)
+    submitted = _SubmittedForecast(comment_state, final_value)
     comment_posted = submission_kind == "final"
     if comment_posted:
-        await deps.metaculus.post_comment(question, comment_text)
+        await _post_comment(
+            question,
+            kind,
+            submitted,
+            deps.rationale_timeout_final,
+            hard_deadline,
+            deps,
+        )
     deps.ledger.record_submission(
         run_id,
         submission_kind,
@@ -451,7 +510,7 @@ async def _submit(
         comment_posted=comment_posted,
         report=render_report(comment_state),
     )
-    return comment_text
+    return submitted
 
 
 def _slot_draw_result(
@@ -509,7 +568,7 @@ async def _run_model_ladder(
     duplicated: set[str] = set()
     results: dict[str, ModelResult] = {}
     submitted: RunStatus | None = None
-    provisional_comment_text: str | None = None
+    provisional: _SubmittedForecast | None = None
 
     def _collect(task_map: dict[str, asyncio.Task[ModelResult | None]]) -> None:
         for model_id, task in task_map.items():
@@ -577,6 +636,7 @@ async def _run_model_ladder(
                 run_id=run_id,
                 submission_kind="final",
                 pacing_note=pacing_note,
+                hard_deadline=hard_deadline,
                 deps=deps,
             )
             submitted = "submitted"
@@ -584,7 +644,7 @@ async def _run_model_ladder(
 
         if results and submitted is None:
             ordered = list(results.keys())
-            provisional_comment_text = await _submit(
+            provisional = await _submit(
                 question=question,
                 kind=kind,
                 results=results,
@@ -596,6 +656,7 @@ async def _run_model_ladder(
                 run_id=run_id,
                 submission_kind="provisional",
                 pacing_note=pacing_note,
+                hard_deadline=hard_deadline,
                 deps=deps,
             )
             submitted = "provisional"
@@ -605,8 +666,16 @@ async def _run_model_ladder(
                 if not task.done():
                     task.cancel()
             if submitted == "provisional":
-                assert provisional_comment_text is not None
-                await deps.metaculus.post_comment(question, provisional_comment_text)
+                assert provisional is not None
+                assert question.close_time is not None
+                await _post_comment(
+                    question,
+                    kind,
+                    provisional,
+                    deps.rationale_timeout_provisional,
+                    question.close_time - deps.rationale_close_margin,
+                    deps,
+                )
                 deps.ledger.mark_comment_posted(run_id, "provisional")
             break
 
