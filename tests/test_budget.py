@@ -3,7 +3,7 @@ fail-open, and ledger-based cost estimate)."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -12,16 +12,23 @@ from pytest_httpx import HTTPXMock
 
 from betomcat.budget import (
     KEY_STATUS_URL,
+    MINIBENCH_URL,
     BudgetGuard,
     KeyStatus,
     KeyStatusCache,
+    MinibenchRoundCache,
+    PacingResult,
+    RoundAllowance,
     compute_daily_budget,
     compute_pace,
+    compute_round_pace,
     estimate_cost,
     fetch_key_status,
+    fetch_minibench_start,
     filter_by_context,
     select_eligible,
 )
+from betomcat.config import DEFAULT_BUDGET_WINDOW_END
 from betomcat.ledger import Ledger
 from betomcat.pool import ModelSpec
 
@@ -706,3 +713,451 @@ async def test_budget_guard_restrict_combines_context_filter_and_pacing(
     assert "too-small" not in eligible_ids  # dropped by the context filter
     assert "expensive" not in eligible_ids  # dropped by pacing (pace > 2)
     assert "cheap" in eligible_ids
+
+
+# -- MiniBench round mode ---------------------------------------------------------
+
+ROUND_START = datetime(2026, 9, 21, tzinfo=UTC)
+ROUND_START_TEXT = "2026-09-21T00:00:00Z"
+IN_ROUND = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
+
+
+def _minibench_json(start_date: str = ROUND_START_TEXT) -> dict[str, object]:
+    return {"id": 33125, "slug": "minibench", "start_date": start_date}
+
+
+def test_compute_round_pace_is_spend_over_budget() -> None:
+    assert compute_round_pace(20.0, 50.0) == pytest.approx(0.4)
+    assert compute_round_pace(75.0, 50.0) == pytest.approx(1.5)
+
+
+def test_compute_round_pace_with_no_budget() -> None:
+    assert compute_round_pace(0.0, 0.0) == 0.0
+    assert compute_round_pace(1.0, 0.0) == float("inf")
+
+
+async def test_fetch_minibench_start_parses_start_date_and_sends_headers(
+    httpx_mock: HTTPXMock,
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+
+    async with httpx.AsyncClient() as client:
+        start = await fetch_minibench_start(client, "meta-token")
+
+    assert start == ROUND_START
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["Authorization"] == "Token meta-token"
+    assert request.headers["User-Agent"].startswith("Mozilla/5.0")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"status_code": 403, "text": "cloudflare"},
+        {"status_code": 200, "text": "not json"},
+        {"status_code": 200, "json": {"id": 1}},
+        {"status_code": 200, "json": {"start_date": None}},
+        {"status_code": 200, "json": {"start_date": "soon"}},
+        {"status_code": 200, "json": ["start_date"]},
+    ],
+)
+async def test_fetch_minibench_start_fails_open(
+    httpx_mock: HTTPXMock, response: dict[str, object]
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, **response)  # type: ignore[arg-type]
+
+    async with httpx.AsyncClient() as client:
+        assert await fetch_minibench_start(client, "meta-token") is None
+
+
+async def test_fetch_minibench_start_never_logs_the_token(
+    httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, status_code=403, text="blocked")
+    caplog.set_level("WARNING")
+
+    async with httpx.AsyncClient() as client:
+        await fetch_minibench_start(client, "super-secret-token")
+
+    assert "MiniBench round lookup failed" in caplog.text
+    assert "super-secret-token" not in caplog.text
+
+
+async def test_minibench_round_cache_reuses_within_ttl(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    clock_value = [0.0]
+    cache = MinibenchRoundCache(ttl_seconds=300.0, clock=lambda: clock_value[0])
+
+    async with httpx.AsyncClient() as client:
+        first = await cache.get(client, "t")
+        clock_value[0] = 299.0
+        second = await cache.get(client, "t")
+
+    assert first == second == ROUND_START
+    assert len(httpx_mock.get_requests()) == 1
+
+
+async def test_minibench_round_cache_refetches_after_ttl(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    httpx_mock.add_response(
+        url=MINIBENCH_URL, json=_minibench_json("2026-10-05T00:00:00Z")
+    )
+    clock_value = [0.0]
+    cache = MinibenchRoundCache(ttl_seconds=300.0, clock=lambda: clock_value[0])
+
+    async with httpx.AsyncClient() as client:
+        first = await cache.get(client, "t")
+        clock_value[0] = 301.0
+        second = await cache.get(client, "t")
+
+    assert first == ROUND_START
+    assert second == datetime(2026, 10, 5, tzinfo=UTC)
+    assert len(httpx_mock.get_requests()) == 2
+
+
+async def test_minibench_round_cache_caches_a_failed_lookup(
+    httpx_mock: HTTPXMock,
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, status_code=403)
+    clock_value = [0.0]
+    cache = MinibenchRoundCache(ttl_seconds=300.0, clock=lambda: clock_value[0])
+
+    async with httpx.AsyncClient() as client:
+        first = await cache.get(client, "t")
+        second = await cache.get(client, "t")
+
+    assert first is None and second is None
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_select_eligible_round_mode_excludes_nothing_under_budget(
+    ledger: Ledger,
+) -> None:
+    cheap = _model("cheap", price_in=0.1, price_out=0.5)
+    expensive = _model("expensive", price_in=10, price_out=50)
+    # usage_daily this high would put the daily rule deep into the 0.05 band.
+    funded = _funded(limit_remaining=60.0, usage_daily=40.0)
+
+    result = select_eligible(
+        [cheap, expensive],
+        funded,
+        KeyStatus(ok=False),
+        ledger,
+        WINDOW_END,
+        IN_ROUND,
+        round_allowance=RoundAllowance(spend_usd=30.0, budget_usd=50.0),
+    )
+
+    assert result.pace == pytest.approx(0.6)
+    assert result.daily_budget == pytest.approx(50.0)
+    assert result.excluded_ids == []
+
+
+def test_select_eligible_round_mode_applies_the_ladder_over_budget(
+    ledger: Ledger,
+) -> None:
+    cheap1 = _model("cheap1")
+    cheap2 = _model("cheap2")
+    medium = _model("medium", price_in=2, price_out=10)  # est cost 0.124
+    expensive = _model("expensive", price_in=10, price_out=50)  # est cost 0.62
+    funded = _funded(limit_remaining=30.0, usage_daily=0.0)
+
+    result = select_eligible(
+        [cheap1, cheap2, medium, expensive],
+        funded,
+        KeyStatus(ok=False),
+        ledger,
+        WINDOW_END,
+        IN_ROUND,
+        round_allowance=RoundAllowance(spend_usd=55.0, budget_usd=50.0),
+    )
+
+    assert result.pace == pytest.approx(1.1)
+    # Spend >= budget is the ladder's 0.05 band, so it applies as soon as
+    # pace passes 1 and the 0.40 / 0.20 bands never engage in round mode.
+    assert result.excluded_ids == ["expensive", "medium"]
+
+
+def test_select_eligible_round_mode_keeps_the_low_credit_rule(ledger: Ledger) -> None:
+    cheap1 = _model("cheap1")
+    cheap2 = _model("cheap2")
+    medium = _model("medium", price_in=2, price_out=10)
+    funded = _funded(limit_remaining=2.0, usage_daily=0.0)
+
+    result = select_eligible(
+        [cheap1, cheap2, medium],
+        funded,
+        KeyStatus(ok=False),
+        ledger,
+        WINDOW_END,
+        IN_ROUND,
+        round_allowance=RoundAllowance(spend_usd=1.0, budget_usd=50.0),
+    )
+
+    assert result.excluded_ids == ["medium"]
+
+
+def test_select_eligible_round_mode_keeps_the_free_key_rule(ledger: Ledger) -> None:
+    free_model = _model("free-a", tier="free", key="free")
+    paid1 = _model("paid1")
+    paid2 = _model("paid2")
+    funded = _funded(limit_remaining=80.0, usage_daily=0.0)
+    free_status = KeyStatus(ok=True, free_daily_requests_remaining=2)
+
+    result = select_eligible(
+        [free_model, paid1, paid2],
+        funded,
+        free_status,
+        ledger,
+        WINDOW_END,
+        IN_ROUND,
+        round_allowance=RoundAllowance(spend_usd=1.0, budget_usd=50.0),
+    )
+
+    assert result.excluded_ids == ["free-a"]
+
+
+async def _restrict_with_mocks(
+    httpx_mock: HTTPXMock,
+    ledger: Ledger,
+    now: datetime,
+    limit_remaining: float = 88.0,
+    usage_daily: float = 0.0,
+    token: str | None = "meta-token",
+    models: list[ModelSpec] | None = None,
+) -> PacingResult:
+    httpx_mock.add_response(
+        url=KEY_STATUS_URL,
+        json={"data": {"limit_remaining": limit_remaining, "usage_daily": usage_daily}},
+    )
+    pool = models or [
+        _model("cheap1"),
+        _model("cheap2"),
+        _model("expensive", price_in=10, price_out=50),
+    ]
+    async with httpx.AsyncClient() as http_client:
+        guard = BudgetGuard(
+            funded_api_key="funded-key",
+            http_client=http_client,
+            metaculus_token=token,
+        )
+        return await guard.restrict(pool, prompt_chars=100, ledger=ledger, now=now)
+
+
+async def test_guard_uses_round_mode_inside_the_busy_window(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    # The daily rule would put this in the 0.05 band (usage_daily 10 of ~$8).
+    result = await _restrict_with_mocks(
+        httpx_mock, ledger, IN_ROUND, limit_remaining=88.0, usage_daily=10.0
+    )
+
+    assert result.daily_budget == pytest.approx(50.0)
+    assert result.pace == pytest.approx(0.0)
+    assert result.excluded_ids == []
+
+
+async def test_guard_round_window_start_is_inclusive_and_end_exclusive(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    async with httpx.AsyncClient() as http_client:
+        guard = BudgetGuard(
+            funded_api_key="funded-key",
+            http_client=http_client,
+            metaculus_token="meta-token",
+            cache=KeyStatusCache(ttl_seconds=0.0),
+        )
+        httpx_mock.add_response(
+            url=KEY_STATUS_URL,
+            json={"data": {"limit_remaining": 88.0, "usage_daily": 0.0}},
+            is_reusable=True,
+        )
+        pool = [_model("a"), _model("b")]
+        outcomes = {}
+        for label, now in {
+            "before": ROUND_START - timedelta(seconds=1),
+            "at_start": ROUND_START,
+            "last_second": ROUND_START + timedelta(days=4) - timedelta(seconds=1),
+            "at_end": ROUND_START + timedelta(days=4),
+        }.items():
+            result = await guard.restrict(pool, 100, ledger, now)
+            outcomes[label] = result.daily_budget == pytest.approx(50.0)
+
+    assert outcomes == {
+        "before": False,
+        "at_start": True,
+        "last_second": True,
+        "at_end": False,
+    }
+
+
+async def test_guard_uses_daily_rule_outside_the_busy_window(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    after_window = ROUND_START + timedelta(days=6, hours=12)
+
+    result = await _restrict_with_mocks(httpx_mock, ledger, after_window)
+
+    expected = compute_daily_budget(88.0, 0.0, DEFAULT_BUDGET_WINDOW_END, after_window)
+    assert result.daily_budget == pytest.approx(expected)
+    assert ledger.get_round_start(ROUND_START_TEXT) is None
+
+
+async def test_guard_falls_back_to_daily_rule_when_the_lookup_fails(
+    httpx_mock: HTTPXMock, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, status_code=403, text="cloudflare")
+    caplog.set_level("WARNING")
+
+    result = await _restrict_with_mocks(httpx_mock, ledger, IN_ROUND)
+
+    expected = compute_daily_budget(88.0, 0.0, DEFAULT_BUDGET_WINDOW_END, IN_ROUND)
+    assert result.daily_budget == pytest.approx(expected)
+    assert "MiniBench round lookup failed" in caplog.text
+    assert "meta-token" not in caplog.text
+
+
+async def test_guard_without_a_metaculus_token_uses_daily_rule_without_a_lookup(
+    httpx_mock: HTTPXMock, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("WARNING")
+
+    result = await _restrict_with_mocks(httpx_mock, ledger, IN_ROUND, token=None)
+
+    expected = compute_daily_budget(88.0, 0.0, DEFAULT_BUDGET_WINDOW_END, IN_ROUND)
+    assert result.daily_budget == pytest.approx(expected)
+    assert [r.url.host for r in httpx_mock.get_requests()] == ["openrouter.ai"]
+    assert "no Metaculus token" in caplog.text
+
+
+async def test_guard_skips_the_round_lookup_when_the_funded_key_is_unreadable(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=KEY_STATUS_URL, status_code=500)
+    async with httpx.AsyncClient() as http_client:
+        guard = BudgetGuard(
+            funded_api_key="funded-key",
+            http_client=http_client,
+            metaculus_token="meta-token",
+        )
+        result = await guard.restrict([_model("a"), _model("b")], 100, ledger, IN_ROUND)
+
+    assert result.pace is None
+    assert [r.url.host for r in httpx_mock.get_requests()] == ["openrouter.ai"]
+
+
+async def test_guard_caches_the_round_lookup_across_questions(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    httpx_mock.add_response(
+        url=KEY_STATUS_URL,
+        json={"data": {"limit_remaining": 88.0, "usage_daily": 0.0}},
+        is_reusable=True,
+    )
+    async with httpx.AsyncClient() as http_client:
+        guard = BudgetGuard(
+            funded_api_key="funded-key",
+            http_client=http_client,
+            metaculus_token="meta-token",
+            cache=KeyStatusCache(ttl_seconds=0.0),
+        )
+        for _ in range(3):
+            await guard.restrict([_model("a"), _model("b")], 100, ledger, IN_ROUND)
+
+    minibench_requests = [
+        r for r in httpx_mock.get_requests() if r.url.host == "www.metaculus.com"
+    ]
+    assert len(minibench_requests) == 1
+
+
+async def test_guard_records_the_round_start_value_on_first_sight_only(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    httpx_mock.add_response(
+        url=KEY_STATUS_URL,
+        json={"data": {"limit_remaining": 95.0, "usage_daily": 0.0}},
+    )
+    httpx_mock.add_response(
+        url=KEY_STATUS_URL,
+        json={"data": {"limit_remaining": 80.0, "usage_daily": 0.0}},
+    )
+    async with httpx.AsyncClient() as http_client:
+        guard = BudgetGuard(
+            funded_api_key="funded-key",
+            http_client=http_client,
+            metaculus_token="meta-token",
+            cache=KeyStatusCache(ttl_seconds=0.0),
+        )
+        first = await guard.restrict([_model("a"), _model("b")], 100, ledger, IN_ROUND)
+        second = await guard.restrict([_model("a"), _model("b")], 100, ledger, IN_ROUND)
+
+    assert ledger.get_round_start(ROUND_START_TEXT) == pytest.approx(95.0)
+    assert first.pace == pytest.approx(0.0)
+    assert second.pace == pytest.approx(15.0 / 50.0)
+
+
+async def test_guard_round_spend_is_recorded_start_minus_current_remaining(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    ledger.record_round_start(ROUND_START_TEXT, 90.0)
+    expensive = _model("expensive", price_in=10, price_out=50)
+
+    result = await _restrict_with_mocks(
+        httpx_mock,
+        ledger,
+        IN_ROUND,
+        limit_remaining=45.0,
+        models=[_model("cheap1"), _model("cheap2"), expensive],
+    )
+
+    assert result.pace == pytest.approx(45.0 / 50.0)
+    assert result.excluded_ids == []
+
+
+async def test_guard_round_over_budget_excludes_expensive_models(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    ledger.record_round_start(ROUND_START_TEXT, 99.0)
+    expensive = _model("expensive", price_in=10, price_out=50)
+
+    result = await _restrict_with_mocks(
+        httpx_mock,
+        ledger,
+        IN_ROUND,
+        limit_remaining=40.0,
+        models=[_model("cheap1"), _model("cheap2"), expensive],
+    )
+
+    assert result.pace == pytest.approx(59.0 / 50.0)
+    assert result.excluded_ids == ["expensive"]
+
+
+async def test_guard_round_spend_never_goes_negative_after_a_credit_top_up(
+    httpx_mock: HTTPXMock, ledger: Ledger
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    ledger.record_round_start(ROUND_START_TEXT, 40.0)
+
+    result = await _restrict_with_mocks(
+        httpx_mock, ledger, IN_ROUND, limit_remaining=99.0
+    )
+
+    assert result.pace == pytest.approx(0.0)
+
+
+async def test_guard_logs_round_mode(
+    httpx_mock: HTTPXMock, ledger: Ledger, caplog: pytest.LogCaptureFixture
+) -> None:
+    httpx_mock.add_response(url=MINIBENCH_URL, json=_minibench_json())
+    caplog.set_level("INFO", logger="betomcat.budget")
+
+    await _restrict_with_mocks(httpx_mock, ledger, IN_ROUND)
+
+    assert "MiniBench round mode" in caplog.text

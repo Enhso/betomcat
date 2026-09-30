@@ -25,6 +25,8 @@ def _settings(tmp_path: Path) -> Settings:
         dry_run=True,
         tournaments=(1,),
         budget_window_end=datetime(2026, 10, 5, tzinfo=UTC),
+        minibench_round_budget_usd=42.0,
+        minibench_busy_days=3,
     )
 
 
@@ -48,6 +50,9 @@ async def test_build_deps_configures_a_live_budget_guard(tmp_path: Path) -> None
         assert deps.budget.funded_api_key == "funded-key"
         assert deps.budget.free_api_key == "free-key"
         assert deps.budget.window_end == datetime(2026, 10, 5, tzinfo=UTC)
+        assert deps.budget.metaculus_token == "meta-token"
+        assert deps.budget.round_budget_usd == 42.0
+        assert deps.budget.minibench_busy_days == 3
     finally:
         await deps.iw.aclose()
         await deps.llm.aclose()

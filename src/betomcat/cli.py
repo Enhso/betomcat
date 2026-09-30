@@ -50,6 +50,9 @@ def build_deps(settings: Settings, dry_run: bool) -> PipelineDeps:
         funded_api_key=settings.openrouter_api_key,
         free_api_key=settings.openrouter_free_api_key,
         window_end=settings.budget_window_end,
+        metaculus_token=settings.metaculus_token,
+        round_budget_usd=settings.minibench_round_budget_usd,
+        minibench_busy_days=settings.minibench_busy_days,
     )
     return PipelineDeps(
         iw=iw,

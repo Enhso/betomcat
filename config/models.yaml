@@ -21,7 +21,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 10
@@ -33,7 +33,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 10
@@ -45,7 +45,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 4
@@ -57,7 +57,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 2
@@ -69,7 +69,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 2
@@ -81,7 +81,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 2
@@ -93,7 +93,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0.75
@@ -105,7 +105,7 @@ models:
     tier: frontier
     enabled: true
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0.10
@@ -118,7 +118,7 @@ models:
     tier: free
     enabled: false
     key: funded
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
@@ -131,7 +131,7 @@ models:
     tier: free
     enabled: true
     key: free
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
@@ -143,7 +143,7 @@ models:
     tier: free
     enabled: true
     key: free
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
@@ -155,7 +155,7 @@ models:
     tier: free
     enabled: false
     key: free
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
@@ -167,7 +167,7 @@ models:
     tier: free
     enabled: true
     key: free
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
@@ -179,7 +179,7 @@ models:
     tier: free
     enabled: true
     key: free
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
@@ -191,7 +191,7 @@ models:
     tier: free
     enabled: false
     key: free
-    max_tokens: 4000
+    max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0

@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS pacing_decisions (
     excluded_ids TEXT NOT NULL,
     recorded_at TIMESTAMP NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS round_starts (
+    round_start TEXT PRIMARY KEY,
+    limit_remaining REAL NOT NULL,
+    recorded_at TIMESTAMP NOT NULL
+);
 """
 
 
@@ -313,6 +319,37 @@ class Ledger:
             "SELECT * FROM pacing_decisions WHERE run_id = ? ORDER BY id", (run_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def record_round_start(self, round_start: str, limit_remaining: float) -> float:
+        """Record the funded key's `limit_remaining` when a round was first seen.
+
+        Idempotent: a round already on record keeps its original value, so
+        round spend (`budget.py`) stays measured from the first sighting.
+
+        Args:
+            round_start: The round's `start_date`, ISO 8601 UTC text.
+            limit_remaining: The funded key's remaining credit right now.
+
+        Returns:
+            The start value now on record for `round_start`.
+        """
+        self._conn.execute(
+            "INSERT OR IGNORE INTO round_starts "
+            "(round_start, limit_remaining, recorded_at) VALUES (?, ?, ?)",
+            (round_start, limit_remaining, _now_iso()),
+        )
+        self._conn.commit()
+        stored = self.get_round_start(round_start)
+        assert stored is not None
+        return stored
+
+    def get_round_start(self, round_start: str) -> float | None:
+        """The recorded start value for `round_start`, or `None` if unseen."""
+        row = self._conn.execute(
+            "SELECT limit_remaining FROM round_starts WHERE round_start = ?",
+            (round_start,),
+        ).fetchone()
+        return None if row is None else float(row[0])
 
     # -- model forecasts ---------------------------------------------------
 

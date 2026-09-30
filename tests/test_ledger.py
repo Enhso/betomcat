@@ -389,3 +389,64 @@ def test_ledger_persists_across_reopen(tmp_path: Path) -> None:
         assert ledger2.get_question("metaculus:1") is not None
     finally:
         ledger2.close()
+
+
+def test_round_start_is_recorded_once_and_never_overwritten(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        assert ledger.get_round_start("2026-10-05T00:00:00Z") is None
+
+        first = ledger.record_round_start("2026-10-05T00:00:00Z", 95.0)
+        second = ledger.record_round_start("2026-10-05T00:00:00Z", 80.0)
+
+        assert first == pytest.approx(95.0)
+        assert second == pytest.approx(95.0)
+        assert ledger.get_round_start("2026-10-05T00:00:00Z") == pytest.approx(95.0)
+    finally:
+        ledger.close()
+
+
+def test_round_starts_are_tracked_per_round(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.record_round_start("2026-09-21T00:00:00Z", 99.0)
+        ledger.record_round_start("2026-10-05T00:00:00Z", 60.0)
+
+        assert ledger.get_round_start("2026-09-21T00:00:00Z") == pytest.approx(99.0)
+        assert ledger.get_round_start("2026-10-05T00:00:00Z") == pytest.approx(60.0)
+    finally:
+        ledger.close()
+
+
+def test_round_start_persists_across_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.sqlite"
+    ledger1 = Ledger(path)
+    ledger1.record_round_start("2026-10-05T00:00:00Z", 95.0)
+    ledger1.close()
+
+    ledger2 = Ledger(path)
+    try:
+        assert ledger2.record_round_start(
+            "2026-10-05T00:00:00Z", 10.0
+        ) == pytest.approx(95.0)
+    finally:
+        ledger2.close()
+
+
+def test_ledger_adds_round_starts_table_to_a_snapshot_that_predates_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.sqlite"
+    Ledger(path).close()
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE round_starts")
+    raw.commit()
+    raw.close()
+
+    ledger = Ledger(path)
+    try:
+        assert ledger.record_round_start("2026-10-05T00:00:00Z", 90.0) == pytest.approx(
+            90.0
+        )
+    finally:
+        ledger.close()

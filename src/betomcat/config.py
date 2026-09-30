@@ -19,6 +19,11 @@ from forecasting_tools.helpers.metaculus_client import MetaculusClient
 # guard allows the whole remaining credit in a single day, so move it before.
 DEFAULT_BUDGET_WINDOW_END = datetime(2026, 10, 19, tzinfo=UTC)
 
+# While a MiniBench round is in its busy phase the budget guard paces against
+# this per-round allowance instead of the daily pro-rate (Hatim, 2026-09-30).
+DEFAULT_MINIBENCH_ROUND_BUDGET_USD = 50.0
+DEFAULT_MINIBENCH_BUSY_DAYS = 4
+
 
 def _bool_env(name: str, default: bool) -> bool:
     """Parse a boolean environment variable (`1/true/yes/on`, case-insensitive)."""
@@ -33,6 +38,13 @@ def _int_env(name: str, default: int) -> int:
     if raw is None or raw.strip() == "":
         return default
     return int(raw)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw)
 
 
 def _datetime_env(name: str, default: datetime) -> datetime:
@@ -65,6 +77,11 @@ class Settings:
             probability before submission.
         budget_window_end: End of the budget-pacing window (spec s5's
             "two MiniBench weeks"); the daily budget is paced against this.
+        minibench_round_budget_usd: USD allowance for one MiniBench round; the
+            guard paces against it, not the daily budget, during the round's
+            busy phase.
+        minibench_busy_days: Days after a round's `start_date` that count as
+            its busy phase.
     """
 
     metaculus_token: str | None
@@ -87,6 +104,8 @@ class Settings:
     budget_window_end: datetime = field(
         default_factory=lambda: DEFAULT_BUDGET_WINDOW_END
     )
+    minibench_round_budget_usd: float = DEFAULT_MINIBENCH_ROUND_BUDGET_USD
+    minibench_busy_days: int = DEFAULT_MINIBENCH_BUSY_DAYS
 
 
 def load_settings(env_path: Path | str | None = None) -> Settings:
@@ -112,4 +131,10 @@ def load_settings(env_path: Path | str | None = None) -> Settings:
         poll_seconds=_int_env("POLL_SECONDS", 300),
         dry_run=_bool_env("DRY_RUN", False),
         budget_window_end=_datetime_env("BUDGET_WINDOW_END", DEFAULT_BUDGET_WINDOW_END),
+        minibench_round_budget_usd=_float_env(
+            "MINIBENCH_ROUND_BUDGET_USD", DEFAULT_MINIBENCH_ROUND_BUDGET_USD
+        ),
+        minibench_busy_days=_int_env(
+            "MINIBENCH_BUSY_DAYS", DEFAULT_MINIBENCH_BUSY_DAYS
+        ),
     )

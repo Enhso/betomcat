@@ -9,7 +9,9 @@ order:
    prompt (`filter_by_context`).
 2. Budget pacing: drop models progressively more aggressively as today's
    OpenRouter spend outruns a pro-rated daily budget, or as either key's
-   remaining quota runs low (`select_eligible`).
+   remaining quota runs low (`select_eligible`). While a MiniBench round is
+   in its busy phase the daily pro-rate is replaced by a per-round allowance
+   (`RoundAllowance`); the daily rule resumes after.
 
 Every external read (the OpenRouter key-status endpoint) fails open: a
 network error, a non-2xx response, or a malformed body degrades to "unknown
@@ -24,11 +26,15 @@ import statistics
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from betomcat.config import DEFAULT_BUDGET_WINDOW_END
+from betomcat.config import (
+    DEFAULT_BUDGET_WINDOW_END,
+    DEFAULT_MINIBENCH_BUSY_DAYS,
+    DEFAULT_MINIBENCH_ROUND_BUDGET_USD,
+)
 from betomcat.ledger import Ledger
 from betomcat.pool import ModelSpec, effective_key
 
@@ -37,6 +43,14 @@ logger = logging.getLogger(__name__)
 KEY_STATUS_URL = "https://openrouter.ai/api/v1/key"
 KEY_STATUS_TIMEOUT = 10.0
 CACHE_TTL_SECONDS = 60.0
+MINIBENCH_URL = "https://www.metaculus.com/api/projects/tournaments/minibench/"
+MINIBENCH_TIMEOUT = 10.0
+MINIBENCH_CACHE_TTL_SECONDS = 300.0
+# Metaculus sits behind Cloudflare, which rejects non-browser user agents.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
 CHARS_PER_TOKEN = 3.5
 DEFAULT_INPUT_TOKENS = 12_000
 DEFAULT_OUTPUT_TOKENS = 10_000
@@ -180,6 +194,56 @@ class KeyStatusCache:
         return status
 
 
+async def fetch_minibench_start(
+    client: httpx.AsyncClient, token: str
+) -> datetime | None:
+    """The active MiniBench round's `start_date` (UTC), or `None` on any failure.
+
+    Never raises and never logs the token; the guard then uses the daily rule.
+    """
+    try:
+        response = await client.get(
+            MINIBENCH_URL,
+            headers={
+                "Authorization": f"Token {token}",
+                "User-Agent": BROWSER_USER_AGENT,
+            },
+            timeout=MINIBENCH_TIMEOUT,
+        )
+        response.raise_for_status()
+        start = datetime.fromisoformat(response.json()["start_date"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        logger.warning("budget: MiniBench round lookup failed (%s)", type(exc).__name__)
+        return None
+    return start.astimezone(UTC) if start.tzinfo else start.replace(tzinfo=UTC)
+
+
+class MinibenchRoundCache:
+    """TTL cache over `fetch_minibench_start`, failed lookups included.
+
+    Only the round's `start_date` is cached; whether `now` falls inside the busy
+    phase is decided per call. Failures are cached too, so a blocked endpoint
+    is retried every TTL rather than once per question.
+    """
+
+    def __init__(
+        self,
+        ttl_seconds: float = MINIBENCH_CACHE_TTL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl = ttl_seconds
+        self._clock = clock
+        self._entry: tuple[float, datetime | None] | None = None
+
+    async def get(self, client: httpx.AsyncClient, token: str) -> datetime | None:
+        now = self._clock()
+        if self._entry is not None and now - self._entry[0] < self._ttl:
+            return self._entry[1]
+        start = await fetch_minibench_start(client, token)
+        self._entry = (now, start)
+        return start
+
+
 def compute_daily_budget(
     limit_remaining: float,
     usage_daily: float,
@@ -205,6 +269,13 @@ def compute_pace(usage_daily: float, daily_budget: float, now: datetime) -> floa
     return usage_daily / allowed_so_far
 
 
+def compute_round_pace(round_spend: float, round_budget: float) -> float:
+    """Fraction of the MiniBench round allowance spent so far."""
+    if round_budget <= 0:
+        return float("inf") if round_spend > 0 else 0.0
+    return round_spend / round_budget
+
+
 def _cost_threshold(
     pace: float, usage_daily: float, daily_budget: float
 ) -> float | None:
@@ -219,8 +290,19 @@ def _cost_threshold(
 
 
 @dataclass(frozen=True)
+class RoundAllowance:
+    """MiniBench round-mode pacing inputs: spend so far against the round budget."""
+
+    spend_usd: float
+    budget_usd: float
+
+
+@dataclass(frozen=True)
 class PacingResult:
-    """The eligible pool for this draw, plus the pacing state behind it."""
+    """The eligible pool for this draw, plus the pacing state behind it.
+
+    In MiniBench round mode `daily_budget` holds the round budget.
+    """
 
     eligible: list[ModelSpec]
     pace: float | None
@@ -235,12 +317,15 @@ def select_eligible(
     ledger: Ledger,
     window_end: datetime,
     now: datetime,
+    round_allowance: RoundAllowance | None = None,
 ) -> PacingResult:
     """Apply the budget-pacing exclusion bands to an already context-filtered pool.
 
     `models` is assumed already filtered by `filter_by_context`; this only
     adds pacing-driven exclusions on top, then applies the fewer-than-2
-    add-back rule (cheapest excluded model first).
+    add-back rule (cheapest excluded model first). With a `round_allowance`
+    the same bands run on round spend over the round budget instead of the
+    daily pro-rate; the low-credit and free-key rules are unchanged.
     """
     excluded: dict[str, str] = {}
     pace: float | None = None
@@ -254,12 +339,18 @@ def select_eligible(
         limit_remaining = funded_status.limit_remaining
         usage_daily = funded_status.today_spend
         assert usage_daily is not None  # guarded by the `usage_daily is not None` check
-        daily_budget = compute_daily_budget(
-            limit_remaining, usage_daily, window_end, now
-        )
-        pace = compute_pace(usage_daily, daily_budget, now)
+        if round_allowance is not None:
+            spend = round_allowance.spend_usd
+            daily_budget = round_allowance.budget_usd
+            pace = compute_round_pace(spend, daily_budget)
+        else:
+            spend = usage_daily
+            daily_budget = compute_daily_budget(
+                limit_remaining, usage_daily, window_end, now
+            )
+            pace = compute_pace(usage_daily, daily_budget, now)
 
-        threshold = _cost_threshold(pace, usage_daily, daily_budget)
+        threshold = _cost_threshold(pace, spend, daily_budget)
         if threshold is not None:
             for model in models:
                 if model.id in excluded:
@@ -316,6 +407,12 @@ class BudgetGuard:
     cost history into one `restrict` call. A key left unset (or a failed
     status read) fails open for that key's exclusions -- this guard only
     ever narrows the pool, never blocks a run on its own account.
+
+    While a MiniBench round is in its busy phase (`start_date` <= now <
+    `start_date` + `minibench_busy_days`) pacing runs against
+    `round_budget_usd`, with round spend measured from the funded key's
+    `limit_remaining` the first time the round was seen. A missing token or a
+    failed round lookup uses the daily rule.
     """
 
     funded_api_key: str | None = None
@@ -323,6 +420,10 @@ class BudgetGuard:
     window_end: datetime = field(default_factory=lambda: DEFAULT_BUDGET_WINDOW_END)
     http_client: httpx.AsyncClient | None = None
     cache: KeyStatusCache = field(default_factory=KeyStatusCache)
+    metaculus_token: str | None = None
+    round_budget_usd: float = DEFAULT_MINIBENCH_ROUND_BUDGET_USD
+    minibench_busy_days: int = DEFAULT_MINIBENCH_BUSY_DAYS
+    round_cache: MinibenchRoundCache = field(default_factory=MinibenchRoundCache)
 
     async def _status(self, api_key: str | None) -> KeyStatus:
         if not api_key:
@@ -331,6 +432,39 @@ class BudgetGuard:
             return await self.cache.get(self.http_client, api_key)
         async with httpx.AsyncClient() as client:
             return await self.cache.get(client, api_key)
+
+    async def _minibench_round_start(self) -> datetime | None:
+        if not self.metaculus_token:
+            logger.warning(
+                "budget: no Metaculus token; MiniBench round mode unavailable"
+            )
+            return None
+        if self.http_client is not None:
+            return await self.round_cache.get(self.http_client, self.metaculus_token)
+        async with httpx.AsyncClient() as client:
+            return await self.round_cache.get(client, self.metaculus_token)
+
+    async def _round_allowance(
+        self, funded_status: KeyStatus, ledger: Ledger, now: datetime
+    ) -> RoundAllowance | None:
+        """The round allowance when `now` is in a round's busy phase, else `None`.
+
+        Skips the Metaculus lookup entirely when the funded key's status is
+        unusable, since the guard would fail open on it anyway.
+        """
+        if not funded_status.ok or funded_status.limit_remaining is None:
+            return None
+        round_start = await self._minibench_round_start()
+        if round_start is None:
+            return None
+        busy_end = round_start + timedelta(days=self.minibench_busy_days)
+        if not round_start <= now < busy_end:
+            return None
+        start_remaining = ledger.record_round_start(
+            round_start.strftime("%Y-%m-%dT%H:%M:%SZ"), funded_status.limit_remaining
+        )
+        spend = max(start_remaining - funded_status.limit_remaining, 0.0)
+        return RoundAllowance(spend_usd=spend, budget_usd=self.round_budget_usd)
 
     async def restrict(
         self,
@@ -342,6 +476,23 @@ class BudgetGuard:
         context_ok = filter_by_context(models, prompt_chars)
         funded_status = await self._status(self.funded_api_key)
         free_status = await self._status(self.free_api_key)
-        return select_eligible(
-            context_ok, funded_status, free_status, ledger, self.window_end, now
+        round_allowance = await self._round_allowance(funded_status, ledger, now)
+        result = select_eligible(
+            context_ok,
+            funded_status,
+            free_status,
+            ledger,
+            self.window_end,
+            now,
+            round_allowance=round_allowance,
         )
+        if round_allowance is not None:
+            logger.info(
+                "budget: MiniBench round mode, spend $%.2f of $%.2f (pace %.2f), "
+                "%d model(s) excluded",
+                round_allowance.spend_usd,
+                round_allowance.budget_usd,
+                result.pace if result.pace is not None else 0.0,
+                len(result.excluded_ids),
+            )
+        return result

@@ -24,6 +24,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "POLL_SECONDS",
         "DRY_RUN",
         "BUDGET_WINDOW_END",
+        "MINIBENCH_ROUND_BUDGET_USD",
+        "MINIBENCH_BUSY_DAYS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -38,6 +40,8 @@ def test_load_settings_defaults(tmp_path: Path) -> None:
     assert settings.openrouter_api_key is None
     assert settings.openrouter_free_api_key is None
     assert settings.budget_window_end == datetime(2026, 10, 19, tzinfo=UTC)
+    assert settings.minibench_round_budget_usd == pytest.approx(50.0)
+    assert settings.minibench_busy_days == 4
     assert settings.iw_url == "http://127.0.0.1:8080"
     assert settings.data_dir == Path("./data")
     assert settings.soft_threshold_min == 30
@@ -94,3 +98,31 @@ def test_load_settings_reads_free_key_and_window_end(
 
     assert settings.openrouter_free_api_key == "free-secret"
     assert settings.budget_window_end == datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def test_load_settings_reads_minibench_round_env_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MINIBENCH_ROUND_BUDGET_USD", "42.5")
+    monkeypatch.setenv("MINIBENCH_BUSY_DAYS", "3")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+
+    settings = load_settings(empty_env)
+
+    assert settings.minibench_round_budget_usd == pytest.approx(42.5)
+    assert settings.minibench_busy_days == 3
+
+
+def test_load_settings_blank_minibench_env_vars_use_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MINIBENCH_ROUND_BUDGET_USD", "  ")
+    monkeypatch.setenv("MINIBENCH_BUSY_DAYS", "")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+
+    settings = load_settings(empty_env)
+
+    assert settings.minibench_round_budget_usd == pytest.approx(50.0)
+    assert settings.minibench_busy_days == 4

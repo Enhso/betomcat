@@ -454,3 +454,26 @@ Decisions (defaults in force until answered):
   stays the unmodified-template control. First shift dispatched by hand,
   run `36693458833`.
 - **`z-ai/glm-5.2:free` disabled** (`289234e`, Hatim).
+- **Measured cost ~$0.53 per question** on the first three live runs ($0.49,
+  $0.69, $0.41; failed attempts carry no `cost_usd`, so this is a floor), not
+  the ~$0.20 priced on 09-25. At the ~$4.86 daily allowance the guard would
+  drop Fable/Astra after ~6 questions of a 44-question MiniBench day.
+- **Live failure causes:** astra on the NZ numeric: one unparseable reply,
+  then two `empty completion content` (high-effort reasoning used up
+  `max_tokens: 4000` on paid calls). gemini-3.1-pro-preview: three 429s in 4 s
+  (Google free-tier quota behind the BYOK key). glm-5.2:free: 404, retired.
+- **Hatim's decisions (2026-09-30):** comment rationale (5.0) is 300 words by
+  `openai/gpt-6-luna` and states the submitted forecast; MiniBench round 2 is
+  paced against a round budget (~$50 over the busy days) instead of the daily
+  pro-rate; at most 4 questions in flight; `max_tokens` 8000 for every pool
+  model; the two Gemini models move to Hatim's own AI Studio key through a
+  direct Google route (not BYOK on his OpenRouter account), key in `.env` and
+  the Actions secret `GEMINI_API_KEY`, set by him. Priority order left to the
+  lead: MiniBench readiness and 5.0 first, then 5.3 weights (needed before
+  round 2 resolves), 5.1 referee, 5.7 model list, then 5.6, 5.2, 5.4, 5.5.
+- **Hatim's AI Studio key probed** (`GEMINI_API_KEY` in `.env` and as an
+  Actions secret): `gemini-3.8-flash` answers; `gemini-3.1-pro-preview` returns
+  429 on the first request with `generate_content_free_tier_requests, limit:
+  0`. The free tier has no Pro quota at all, which also explains the funded
+  BYOK key's 3/3 429s on the NZ question. Pro is disabled until a
+  billing-enabled key exists; Flash moves to the direct Google route.

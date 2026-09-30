@@ -12,6 +12,11 @@ question once it's within `LATE_WINDOW_MINUTES` of its scheduled close (env,
 default 180); MiniBench's 3h windows are claimed right away. A question
 claimed too early is simply reconsidered on a later poll -- no state needed.
 
+At most `MAX_CONCURRENT_QUESTIONS` (env, default 4) pipelines run at once, so
+a burst of openings queues instead of launching every research job together.
+The poll loop wakes early when an in-flight question finishes and others are
+waiting, so a freed slot is refilled at once rather than after `poll_seconds`.
+
 [PRACTICE] questions are never forecast (Hatim, 2026-09-24).
 """
 
@@ -33,6 +38,7 @@ from betomcat.pipeline import PipelineDeps, PipelineOutcome, run_pipeline
 logger = logging.getLogger(__name__)
 
 DEFAULT_LATE_WINDOW_MINUTES = 180
+DEFAULT_MAX_CONCURRENT_QUESTIONS = 4
 PRACTICE_PREFIX = "[PRACTICE]"
 
 
@@ -42,6 +48,33 @@ def _late_window_minutes() -> int:
     if raw is None or raw.strip() == "":
         return DEFAULT_LATE_WINDOW_MINUTES
     return int(raw)
+
+
+def _max_concurrent_questions() -> int:
+    """`MAX_CONCURRENT_QUESTIONS` env var, or `DEFAULT_MAX_CONCURRENT_QUESTIONS`."""
+    raw = os.environ.get("MAX_CONCURRENT_QUESTIONS")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_MAX_CONCURRENT_QUESTIONS
+    cap = int(raw)
+    if cap < 1:
+        raise ValueError(f"MAX_CONCURRENT_QUESTIONS must be >= 1, got {cap}")
+    return cap
+
+
+async def _wait_for_next_poll(
+    stop_event: asyncio.Event, slot_freed: asyncio.Event | None, poll_seconds: float
+) -> None:
+    """Sleep until `stop_event`, `slot_freed` (if given) or `poll_seconds` elapses."""
+    waiters = [asyncio.create_task(stop_event.wait())]
+    if slot_freed is not None:
+        waiters.append(asyncio.create_task(slot_freed.wait()))
+    try:
+        await asyncio.wait(
+            waiters, timeout=poll_seconds, return_when=asyncio.FIRST_COMPLETED
+        )
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
 
 
 @dataclass
@@ -122,6 +155,7 @@ async def run_daemon(
     hooks = hooks or DaemonHooks()
     stop_event = hooks.stop_event if hooks.stop_event is not None else asyncio.Event()
     late_window_minutes = _late_window_minutes()
+    max_concurrent = _max_concurrent_questions()
 
     if hooks.install_signal_handlers:
         loop = asyncio.get_running_loop()
@@ -132,10 +166,24 @@ async def run_daemon(
                 loop.add_signal_handler(sig, stop_event.set)
 
     in_flight: set[asyncio.Task[None]] = set()
+    # Every question id this process has started a pipeline for. `has_run`
+    # only covers a question once its pipeline has written a run row, which
+    # happens after the task starts; and a pipeline that skips a question
+    # (unsupported type) never writes one. Without this set, the early
+    # re-poll below could start the same question again, or spin on a
+    # question that finishes instantly without a run row.
+    claimed_ids: set[str] = set()
+    slot_freed = asyncio.Event()
+
+    def _release_slot(task: asyncio.Task[None]) -> None:
+        in_flight.discard(task)
+        slot_freed.set()
 
     while not stop_event.is_set():
+        slot_freed.clear()
         deferred = 0
         practice = 0
+        waiting = 0
         for tournament in tournaments:
             try:
                 questions = await deps.metaculus.list_open_questions(tournament)
@@ -165,37 +213,52 @@ async def run_daemon(
                     deferred += 1
                     continue
 
+                question_id = f"metaculus:{question.id_of_question}"
+                if (
+                    question_id in claimed_ids
+                    or deps.metaculus.already_forecasted(question)
+                    or deps.ledger.has_run(question_id)
+                ):
+                    continue
+
+                # The concurrency cap also comes before `should_claim`, for
+                # the same reason as the late-window check: a question that
+                # cannot start now must not consume a claim slot.
+                if len(in_flight) >= max_concurrent:
+                    waiting += 1
+                    continue
+
                 # `should_claim` is called exactly once per question actually
-                # considered for claiming -- a caller enforcing a claim cap
-                # (e.g. host.py's --max-questions) counts True results, so
-                # calling it more than once per real claim (an outer
-                # per-poll gate plus this one) would exhaust the cap without
-                # ever claiming anything.
+                # claimed -- a caller enforcing a claim cap (e.g. host.py's
+                # --max-questions) counts True results, so calling it more
+                # than once per real claim (an outer per-poll gate, or for
+                # questions that turn out to be already run) would exhaust
+                # the cap without ever claiming anything.
                 if not hooks.should_claim():
                     break
-                question_id = f"metaculus:{question.id_of_question}"
-                if deps.metaculus.already_forecasted(question):
-                    continue
-                if deps.ledger.has_run(question_id):
-                    continue
+                claimed_ids.add(question_id)
                 task = asyncio.create_task(
                     _forecast_one(question, deps, hooks.on_question_done)
                 )
                 in_flight.add(task)
-                task.add_done_callback(in_flight.discard)
+                task.add_done_callback(_release_slot)
 
         logger.info(
-            "heartbeat: poll complete, %d question(s) in flight, "
+            "heartbeat: poll complete, %d question(s) in flight (cap %d), "
+            "%d waiting for a slot, "
             "%d open question(s) deferred (outside the %d-minute late window), "
             "%d practice question(s) skipped",
             len(in_flight),
+            max_concurrent,
+            waiting,
             deferred,
             late_window_minutes,
             practice,
         )
 
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop_event.wait(), timeout=poll_seconds)
+        await _wait_for_next_poll(
+            stop_event, slot_freed if waiting else None, poll_seconds
+        )
 
     logger.info(
         "shutdown requested, waiting on %d in-flight question(s)", len(in_flight)
