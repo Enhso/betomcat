@@ -189,7 +189,7 @@ models:
 
   - id: z-ai/glm-5.2:free
     tier: free
-    enabled: true
+    enabled: false
     key: free
     max_tokens: 4000
     reasoning:
@@ -197,4 +197,4 @@ models:
     price_in: 0
     price_out: 0
     context_tokens: 32000
-    notes: null
+    notes: "Disabled 2026-09-30: removed from OpenRouter's catalog (only paid z-ai/glm-5.2 remains); failed 3/3 live attempts."
