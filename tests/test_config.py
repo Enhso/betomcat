@@ -16,6 +16,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "METACULUS_TOKEN",
         "OPENROUTER_API_KEY",
         "OPENROUTER_FREE_API_KEY",
+        "GEMINI_API_KEY",
         "ASKNEWS_API_KEY",
         "IW_URL",
         "DATA_DIR",
@@ -39,6 +40,7 @@ def test_load_settings_defaults(tmp_path: Path) -> None:
     assert settings.metaculus_token is None
     assert settings.openrouter_api_key is None
     assert settings.openrouter_free_api_key is None
+    assert settings.gemini_api_key is None
     assert settings.budget_window_end == datetime(2026, 10, 19, tzinfo=UTC)
     assert settings.minibench_round_budget_usd == pytest.approx(50.0)
     assert settings.minibench_busy_days == 4
@@ -126,3 +128,27 @@ def test_load_settings_blank_minibench_env_vars_use_defaults(
 
     assert settings.minibench_round_budget_usd == pytest.approx(50.0)
     assert settings.minibench_busy_days == 4
+
+
+def test_load_settings_reads_gemini_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+
+    settings = load_settings(empty_env)
+
+    assert settings.gemini_api_key == "gemini-secret"
+
+
+def test_load_settings_blank_gemini_api_key_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+
+    settings = load_settings(empty_env)
+
+    assert settings.gemini_api_key is None

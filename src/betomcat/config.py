@@ -65,6 +65,8 @@ class Settings:
         openrouter_free_api_key: Personal OpenRouter key (50 free req/day)
             used for `:free` pool models that the funded key's
             allowed-providers list refuses (BUILD_LOG 2026-09-22 evening).
+        gemini_api_key: Google AI Studio key; pool entries with `key: google`
+            call Google's OpenAI-compatible endpoint directly with it.
         asknews_api_key: AskNews key used for direct research (degraded mode).
         iw_url: Base URL of the Intelligence Workbench HTTP API.
         data_dir: Root directory for the ledger, weights file, and outbox.
@@ -94,6 +96,7 @@ class Settings:
     hard_threshold_min: int
     poll_seconds: int
     dry_run: bool
+    gemini_api_key: str | None = None
     tournaments: tuple[int | str, ...] = field(
         default_factory=lambda: (
             MetaculusClient.CURRENT_AI_COMPETITION_ID,
@@ -124,6 +127,7 @@ def load_settings(env_path: Path | str | None = None) -> Settings:
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
         openrouter_free_api_key=os.environ.get("OPENROUTER_FREE_API_KEY") or None,
         asknews_api_key=os.environ.get("ASKNEWS_API_KEY") or None,
+        gemini_api_key=os.environ.get("GEMINI_API_KEY") or None,
         iw_url=os.environ.get("IW_URL", "http://127.0.0.1:8080"),
         data_dir=Path(os.environ.get("DATA_DIR", "./data")),
         soft_threshold_min=_int_env("SOFT_THRESHOLD_MIN", 30),

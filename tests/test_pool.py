@@ -250,8 +250,29 @@ models:
 """
     )
 
-    with pytest.raises(ValueError, match="key must be 'funded' or 'free'"):
+    with pytest.raises(ValueError, match="key must be 'funded', 'free' or 'google'"):
         load_pool(path)
+
+
+def test_load_pool_accepts_google_key(tmp_path: Path) -> None:
+    path = tmp_path / "models.yaml"
+    path.write_text(
+        """
+ensemble_width: 2
+models:
+  - id: google/gemini-3.8-flash
+    tier: frontier
+    enabled: true
+    key: google
+    price_in: 0
+    price_out: 0
+"""
+    )
+
+    pool = load_pool(path)
+
+    assert pool.models[0].key == "google"
+    assert effective_key(pool.models[0]) == "google"
 
 
 def test_load_pool_missing_new_fields_default_to_none(tmp_path: Path) -> None:
@@ -288,5 +309,25 @@ def test_effective_key_google_free_stays_on_funded_key() -> None:
 
 def test_effective_key_paid_model_defaults_to_funded() -> None:
     model = ModelSpec("anthropic/claude-sonnet-5", "frontier", True)
+
+    assert effective_key(model) == "funded"
+
+
+def test_effective_key_explicit_google_wins() -> None:
+    model = ModelSpec("google/gemini-3.8-flash", "frontier", True, key="google")
+
+    assert effective_key(model) == "google"
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "google/gemini-3.8-flash",
+        "google/gemini-3.1-pro-preview",
+        "google/gemma-4-31b-it:free",
+    ],
+)
+def test_effective_key_google_ids_never_default_to_google_route(model_id: str) -> None:
+    model = ModelSpec(model_id, "frontier", True)
 
     assert effective_key(model) == "funded"

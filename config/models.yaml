@@ -4,8 +4,11 @@
 # two forecast-generating model calls (spec s5); every other gate in this
 # codebase must stay off this file's frontier entries.
 # reasoning: passed through verbatim as OpenRouter's `reasoning` param.
-# key: funded | free -- which OpenRouter key routes this model's calls
-#   (budget.py). Omit to use the default: `:free` ids route to the free key,
+# key: funded | free | google -- which key routes this model's calls
+#   (budget.py). funded/free are the two OpenRouter keys; google calls
+#   Google's OpenAI-compatible endpoint directly with GEMINI_API_KEY (free
+#   tier, so the budget guard never paces it out) and is only used when set
+#   explicitly. Omit to use the default: `:free` ids route to the free key,
 #   except `google/`-prefixed ones, which stay on the funded key (its
 #   allowed-providers list includes google-ai-studio).
 # price_in/price_out: USD per million tokens, for the budget guard's
@@ -79,7 +82,7 @@ models:
 
   - id: google/gemini-3.1-pro-preview
     tier: frontier
-    enabled: true
+    enabled: false
     key: funded
     max_tokens: 8000
     reasoning:
@@ -87,19 +90,19 @@ models:
     price_in: 2
     price_out: 12
     context_tokens: 1000000
-    notes: "Primary frontier peer."
+    notes: "Disabled 2026-09-30: the free tier has a Pro quota of 0 and the funded BYOK key 429'd 3/3 live; re-enable only with a billing-enabled key."
 
   - id: google/gemini-3.8-flash
     tier: frontier
     enabled: true
-    key: funded
+    key: google
     max_tokens: 8000
     reasoning:
       effort: high
-    price_in: 0.75
-    price_out: 3.75
+    price_in: 0
+    price_out: 0
     context_tokens: 1000000
-    notes: "Primary frontier peer."
+    notes: "2026-09-30: moved to Hatim's AI Studio key via the direct Google route."
 
   - id: openai/gpt-6-luna
     tier: frontier

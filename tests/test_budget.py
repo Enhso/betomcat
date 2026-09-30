@@ -1161,3 +1161,125 @@ async def test_guard_logs_round_mode(
     await _restrict_with_mocks(httpx_mock, ledger, IN_ROUND)
 
     assert "MiniBench round mode" in caplog.text
+
+
+# -- direct Google key: never paced out ---------------------------------------
+
+
+def _google_model(context_tokens: int | None = None) -> ModelSpec:
+    # Priced like a top-tier funded model so every band would catch it if it
+    # were treated as one.
+    return _model(
+        "google/gemini-3.8-flash",
+        price_in=10,
+        price_out=50,
+        key="google",
+        context_tokens=context_tokens,
+    )
+
+
+def test_estimate_cost_is_zero_for_a_google_key_model_despite_price_and_history(
+    ledger: Ledger,
+) -> None:
+    model = _google_model()
+    for cost in (0.5, 0.7, 0.9):
+        _record_ok_cost(ledger, model.id, cost)
+
+    assert estimate_cost(model, ledger) == 0.0
+
+
+def _daily_pace(target_pace: float) -> KeyStatus:
+    usage_daily = _usage_daily_for_pace(target_pace, 88.0, WINDOW_END, NOON)
+    return _funded(limit_remaining=88.0, usage_daily=usage_daily)
+
+
+@pytest.mark.parametrize(
+    ("funded", "round_allowance", "control"),
+    [
+        pytest.param(
+            _daily_pace(1.3),
+            None,
+            _model("control", price_in=10, price_out=50),
+            id="daily-band-0.40",
+        ),
+        pytest.param(
+            _daily_pace(1.8),
+            None,
+            _model("control", price_in=10, price_out=50),
+            id="daily-band-0.20",
+        ),
+        pytest.param(
+            _daily_pace(2.4),
+            None,
+            _model("control", price_in=10, price_out=50),
+            id="daily-band-0.05",
+        ),
+        pytest.param(
+            _funded(limit_remaining=30.0, usage_daily=0.0),
+            RoundAllowance(spend_usd=55.0, budget_usd=50.0),
+            _model("control", price_in=10, price_out=50),
+            id="round-mode-over-budget",
+        ),
+        pytest.param(
+            _funded(limit_remaining=2.5, usage_daily=0.0),
+            None,
+            _model("control", price_in=1.0, price_out=1.0),
+            id="funded-low-credit",
+        ),
+    ],
+)
+def test_select_eligible_never_excludes_a_google_key_model_by_funded_key_rules(
+    ledger: Ledger,
+    funded: KeyStatus,
+    round_allowance: RoundAllowance | None,
+    control: ModelSpec,
+) -> None:
+    google = _google_model()
+    _record_ok_cost(ledger, google.id, 5.0)
+    padding = _model("padding")
+
+    result = select_eligible(
+        [google, padding, control],
+        funded,
+        KeyStatus(ok=False),
+        ledger,
+        WINDOW_END,
+        NOON,
+        round_allowance=round_allowance,
+    )
+
+    assert result.excluded_ids == ["control"]
+    assert google.id in {m.id for m in result.eligible}
+
+
+def test_select_eligible_never_excludes_a_google_key_model_by_the_free_key_rule(
+    ledger: Ledger,
+) -> None:
+    google = _google_model()
+    padding = _model("padding")
+    free_control = _model("free-control", tier="free", key="free")
+
+    result = select_eligible(
+        [google, padding, free_control],
+        KeyStatus(ok=False),
+        KeyStatus(ok=True, free_daily_requests_remaining=1),
+        ledger,
+        WINDOW_END,
+        NOON,
+    )
+
+    assert result.excluded_ids == ["free-control"]
+    assert google.id in {m.id for m in result.eligible}
+
+
+async def test_guard_still_applies_the_context_filter_to_google_key_models(
+    ledger: Ledger,
+) -> None:
+    too_small = _google_model(context_tokens=100)
+    fits = _model("fits", key="google", context_tokens=None)
+
+    result = await BudgetGuard().restrict(
+        [too_small, fits], prompt_chars=350_000, ledger=ledger, now=NOON
+    )
+
+    assert [m.id for m in result.eligible] == ["fits"]

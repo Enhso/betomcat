@@ -13,6 +13,10 @@ order:
    in its busy phase the daily pro-rate is replaced by a per-round allowance
    (`RoundAllowance`); the daily rule resumes after.
 
+Models routed to the direct Google key (`key: google`) cost nothing and sit on
+neither OpenRouter key, so no pacing band or key-quota rule ever excludes
+them; only the context-fit filter applies.
+
 Every external read (the OpenRouter key-status endpoint) fails open: a
 network error, a non-2xx response, or a malformed body degrades to "unknown
 status", which excludes nothing. This guard only ever narrows the pool, and
@@ -88,7 +92,12 @@ def estimate_cost(model: ModelSpec, ledger: Ledger) -> float:
     ignored: it's a legacy row from before the BYOK cost fix (llm.py) rather
     than a genuinely free call. A model with no configured price (a real
     free model) keeps its zero-cost history as-is.
+
+    A model on the direct Google key is free to us regardless of its price
+    fields or any earlier OpenRouter history, so it is always 0.0.
     """
+    if effective_key(model) == "google":
+        return 0.0
     recent = ledger.get_recent_costs(model.id, limit=10)
     price_in = model.price_in or 0.0
     price_out = model.price_out or 0.0

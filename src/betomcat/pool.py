@@ -20,7 +20,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-KeyChoice = Literal["funded", "free"]
+KeyChoice = Literal["funded", "free", "google"]
 
 
 @dataclass(frozen=True)
@@ -40,10 +40,12 @@ class ModelSpec:
 
 
 def effective_key(model: ModelSpec) -> KeyChoice:
-    """Which OpenRouter key (funded or personal free-tier) serves this model.
+    """Which key serves this model: an OpenRouter key or the direct Google route.
 
-    An explicit `key:` in the pool YAML wins. Otherwise: `:free` ids route to
-    the free key, except `google/`-prefixed ones -- the funded key's
+    An explicit `key:` in the pool YAML wins; `google` (Gemini called directly
+    at Google's OpenAI-compatible endpoint with `GEMINI_API_KEY`) is only ever
+    selected this way, never by default. Otherwise: `:free` ids route to the
+    free OpenRouter key, except `google/`-prefixed ones -- the funded key's
     allowed-providers list includes google-ai-studio, so Google `:free`
     models work there too and stay on the higher-quota funded key
     (BUILD_LOG 2026-09-22 evening).
@@ -85,9 +87,10 @@ class DrawResult:
 def _parse_key(raw_key: Any, model_id: str) -> KeyChoice | None:
     if raw_key is None:
         return None
-    if raw_key not in ("funded", "free"):
+    if raw_key not in ("funded", "free", "google"):
         raise ValueError(
-            f"model {model_id}: key must be 'funded' or 'free', got {raw_key!r}"
+            f"model {model_id}: key must be 'funded', 'free' or 'google', "
+            f"got {raw_key!r}"
         )
     return cast(KeyChoice, raw_key)
 

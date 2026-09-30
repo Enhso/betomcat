@@ -1,4 +1,4 @@
-"""Tests for `cli.build_deps`: two-key OpenRouter routing, budget guard wiring."""
+"""Tests for `cli.build_deps`: LLM key routing, budget guard wiring."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def _settings(tmp_path: Path) -> Settings:
         metaculus_token="meta-token",
         openrouter_api_key="funded-key",
         openrouter_free_api_key="free-key",
+        gemini_api_key="gemini-key",
         asknews_api_key=None,
         iw_url="http://127.0.0.1:8080",
         data_dir=tmp_path,
@@ -30,13 +31,14 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-async def test_build_deps_wires_both_openrouter_keys_into_the_llm_client(
+async def test_build_deps_wires_all_llm_keys_into_the_llm_client(
     tmp_path: Path,
 ) -> None:
     deps = build_deps(_settings(tmp_path), dry_run=True)
     try:
         assert deps.llm._api_key == "funded-key"
         assert deps.llm._free_api_key == "free-key"
+        assert deps.llm._gemini_api_key == "gemini-key"
     finally:
         await deps.iw.aclose()
         await deps.llm.aclose()
@@ -68,6 +70,19 @@ async def test_build_deps_budget_guard_falls_open_with_no_keys(tmp_path: Path) -
     try:
         assert deps.budget.funded_api_key is None
         assert deps.budget.free_api_key is None
+    finally:
+        await deps.iw.aclose()
+        await deps.llm.aclose()
+        deps.ledger.close()
+
+
+async def test_build_deps_leaves_the_gemini_key_unset_when_not_configured(
+    tmp_path: Path,
+) -> None:
+    settings = dataclasses.replace(_settings(tmp_path), gemini_api_key=None)
+    deps = build_deps(settings, dry_run=True)
+    try:
+        assert deps.llm._gemini_api_key is None
     finally:
         await deps.iw.aclose()
         await deps.llm.aclose()

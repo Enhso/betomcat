@@ -44,6 +44,7 @@ def build_deps(settings: Settings, dry_run: bool) -> PipelineDeps:
     llm = OpenRouterClient(
         settings.openrouter_api_key or "",
         free_api_key=settings.openrouter_free_api_key,
+        gemini_api_key=settings.gemini_api_key,
     )
     metaculus = MetaculusWrapper(settings.metaculus_token, dry_run)
     budget = BudgetGuard(
