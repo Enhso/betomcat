@@ -477,3 +477,13 @@ Decisions (defaults in force until answered):
   0`. The free tier has no Pro quota at all, which also explains the funded
   BYOK key's 3/3 429s on the NZ question. Pro is disabled until a
   billing-enabled key exists; Flash moves to the direct Google route.
+- **Shipped (lead verified each diff, re-ran the suite, 306 tests):**
+  `f0b0368` MiniBench prep, `ea047e2` direct Google route (live smoke call
+  through the real client: Flash replied, cost $0), `f96a291` synthesized
+  comment. Live sample of the new synthesis on Q45844's stored rationales:
+  203 words, opens with the submitted 14%, cites the 17 and 24 Sep court/DOJ
+  filings, names the models' disagreement and what would move it.
+- **Round mode ladder:** past the $50 round budget every model estimated at
+  >= $0.05 a call is excluded at once (a cliff, not the graduated bands). Kept
+  deliberately: the graduated bands would allow up to 2x the budget, i.e. all
+  of the remaining credit, against Hatim's "about half for round 2".

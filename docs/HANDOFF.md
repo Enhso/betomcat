@@ -9,15 +9,30 @@ the next session should take it.
 ## 1. Where things stand
 
 v1 is deployed: the Actions host has run unattended since 2026-09-24 19:21
-UTC, and the BUILD_LOG go-live gate (one dry run and one live run on
-bot-testing-area) was met on 2026-09-25. It has not yet forecast a real
-tournament question: none has been open since it went live (see s3).
+UTC. It forecast all three FE Fall questions opened on 28-29 Sep (3-hour
+windows, BUILD_LOG 2026-09-30). On 2026-09-30 it gained the synthesized
+comment, the MiniBench round allowance, a 4-question concurrency cap,
+`max_tokens` 8000 and a direct Google route for Flash; all of it runs from
+the first shift started after ~10:30 UTC 2026-09-30.
 
 | Repo | Commit | State |
 |---|---|---|
-| betomcat (v1, public `Enhso/betomcat`) | `a055eff` on `main` | Host shifts chain every ~5.5 h. Today's commits (below) are pushed but only run from the first shift started after ~17:40 UTC 2026-09-25. |
+| betomcat (v1, public `Enhso/betomcat`) | `f96a291` on `main` | Host shifts chain every ~5.5 h. |
 | IW (private `Enhso/iw`) | `1c3fe01` on `main` | Checked out by every shift through the deploy key. Hatim's unstaged `prompt.txt` edit: leave it, never stage it. |
 | vezocontrol (v2, public `Enhso/vezocontrol`) | `28bdfac` | Template bot, the control. Since 2026-09-30 it runs as self-chaining ~5 h shifts polling `main.py` every 5 min (first shift `36693458833`, dispatched by hand); forecasting code unchanged. |
+
+Committed 2026-09-30 (details in BUILD_LOG "2026-09-30"):
+
+- `289234e` `z-ai/glm-5.2:free` disabled (retired from OpenRouter).
+- `f0b0368` MiniBench round allowance ($50 over `start_date` + 4 days, from
+  the funded key's `limit_remaining` at first sighting, `round_starts` table),
+  at most 4 questions in flight (`MAX_CONCURRENT_QUESTIONS`, early wake on a
+  freed slot), `max_tokens` 8000 for every pool model.
+- `ea047e2` `google/gemini-3.8-flash` on Hatim's AI Studio key through a
+  direct Google route (`key: google`, `GEMINI_API_KEY`, cost 0, never paced
+  out); `gemini-3.1-pro-preview` disabled (free-tier Pro quota is 0).
+- `f96a291` one synthesized rationale per comment (s5.0 done).
+- vezocontrol `28bdfac` self-chaining shifts.
 
 Committed 2026-09-25 (details in BUILD_LOG "2026-09-25"):
 
@@ -32,12 +47,30 @@ Committed 2026-09-25 (details in BUILD_LOG "2026-09-25"):
 Setup is complete: all Actions secrets exist on both repos, IW has a read-only
 deploy key for betomcat.
 
-Check suite (betomcat, 195 tests):
+Check suite (betomcat, 306 tests):
 `uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src && uv run pytest -q`
 Check suite (IW worker, 179 tests), from `~/projects/iw/python`: the same four
 commands.
 
 ## 2. Verify first (start of the next session)
+
+Added 2026-09-30 (check these first):
+
+a. **v2 on its new shifts.** The 14:00 UTC 30 Sep FE Fall question should
+   have a vezocontrol forecast within ~10 min of opening, and the first
+   shift (`36693458833`, ends ~14:03) should have dispatched its successor.
+b. **First synthesized comment.** For the first question forecast after
+   ~10:30 UTC 30 Sep: vezo3's comment is the header plus a paragraph of at
+   most 300 words that opens with the submitted forecast; the shift log shows
+   `rationale synthesis ok` (or `failed, posting fallback`) for it.
+c. **Flash on the direct route.** When Flash is drawn: `model_forecasts` row
+   `ok` with `cost_usd` 0; a 429 means the free-tier quota bit.
+d. **Round mode on Mon 5 Oct.** Once the `minibench` slug moves, the shift
+   log shows `budget: MiniBench round mode, spend $X of $50`, a
+   `round_starts` row appears in the ledger, and heartbeats show `(cap 4)`
+   with a `waiting for a slot` count during the burst.
+e. **Public NZ comment.** Re-check whether Q45844's comment turned public
+   after 17:00 UTC 30 Sep (BUILD_LOG 2026-09-30).
 
 These are deployed but not yet observed running. Do them before new work.
 
@@ -115,7 +148,14 @@ personal history improve every forecast from now on. 5.0 was added by Hatim
 at the end of the session as the next item. **Hatim decides the order**; the
 rest is the lead's proposal with reasons.
 
-### 5.0 A fuller rationale in the posted comment -- next (Hatim, 2026-09-25)
+### 5.0 A fuller rationale in the posted comment -- DONE 2026-09-30 (`f96a291`)
+
+Built as option (b): `rationale.py`, `openai/gpt-6-luna`, at most 300 words,
+opens with the submitted forecast, fallback to the per-model summary lines.
+Follow-ups: the prompt lives in `rationale.py`, not `prompts/` (move it if
+Hatim wants to review it with the others); the Luna call's cost is not in
+the ledger (the budget guard still sees it through the key's usage). The
+original brief follows for reference.
 
 - **The ask:** Hatim read vezo3's two comments on Q43332 and found them too
   terse. The comment should expand on the rationale behind the final
@@ -312,9 +352,11 @@ rest is the lead's proposal with reasons.
    renewed, the horizon can follow the renewal period. The constant is
    `DEFAULT_BUDGET_WINDOW_END` in `src/betomcat/config.py` (env
    `BUDGET_WINDOW_END` overrides it; the workflow does not set it).
-2. **Comment rationale** (s5.0): (b) chosen; target length and model open.
-3. **Priority order of the rest of s5** (the lead proposes referee, personal
-   history, weights, digest, merges).
+2. ~~Comment rationale~~ (s5.0): done, 300 words, Luna.
+3. ~~Priority order~~: left to the lead (Hatim, 2026-09-30), most crux-y
+   first: 5.3 weights (must exist before round 2 resolves ~15-19 Oct), 5.1
+   referee, 5.7 model list, then 5.6, 5.2, 5.4, 5.5. Every open decision
+   inside an item still goes to Hatim before building.
 4. **Referee design** (s5.1: ladder change, classifier model, categories).
 5. **Weight scoring rule** (s5.3).
 6. **Rationale dossier** (s5.6): IW dossier or ledger export.
