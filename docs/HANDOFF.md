@@ -52,10 +52,11 @@ These are deployed but not yet observed running. Do them before new work.
    30 min are the backstop and should all end in seconds (guard skips). A gap of
    more than ~10 min between shifts means the self-dispatch failed: read the
    last step of the ended shift.
-3. **First real FE Fall question (from Mon 28 Sep).** FE Fall questions are
-   long-window; the daemon claims them only within 180 min of their close
-   (`LATE_WINDOW_MINUTES`), so heartbeats show them as `deferred` until then.
-   For the first one forecast, check through the API as vezo3 (s8): exactly one
+3. **First real FE Fall question (from Mon 28 Sep).** Correction
+   (2026-09-30): FE Fall questions are open for 3 h (seen 14:00-17:00 and
+   21:00-00:00 UTC), not long-window, so the daemon claims them as soon as
+   they open. vezo3 forecast all three opened on 28-29 Sep (BUILD_LOG
+   2026-09-30). For the first one forecast, check through the API as vezo3 (s8): exactly one
    private comment, short form (header plus one `Summary:` bullet per model,
    contracts E), attached to the forecast that stands. Then check its ledger
    rows with `pull-state`: `runs.status`, `submissions` (a `provisional` with
@@ -259,6 +260,47 @@ rest is the lead's proposal with reasons.
   embeddings); ranked pairs go into the digest; Hatim approves merges;
   `POST /api/families/merge` applies them prospectively only (no relabeling).
 
+### 5.6 Full rationales kept in a dossier (Hatim, 2026-09-30)
+
+- **The ask:** every model's full rationale is stored in a dossier so it can
+  be examined later (post-resolution review, why a forecast went wrong).
+- **Current state:** the full text is already kept, but only in the ledger:
+  `model_forecasts.rationale` (per attempt) and `submissions.report` (the
+  whole audit report). Both live inside the encrypted state snapshot and are
+  readable only through `pull-state` plus `sqlite3` (s8). The IW dossier
+  linked from `runs.dossier_id` holds the research claims, not the forecasts.
+- **Open (Hatim): which dossier.** (a) Write the rationales back into the
+  question's IW dossier: needs a new IW endpoint and storage, and makes them
+  retrievable by family. Feeding past rationales into future prompts would be
+  a separate design decision, not part of this item. (b) A readable
+  per-question dossier exported from the ledger (e.g. a `betomcat dossier
+  <question>` command rendering Markdown): no IW change.
+- **Constraint:** the repo and its logs are public, so rationales are never
+  committed or logged while a question is open.
+
+### 5.7 Keep the model pool current (Hatim, 2026-09-30)
+
+- **The ask:** add models as they are released and remove them when they are
+  retired, possibly through a separate Actions workflow.
+- **Current state:** `config/models.yaml` is edited by hand. A retired model
+  is only noticed when its calls fail: nex 404s (disabled 2026-09-25), and on
+  2026-09-30 `z-ai/glm-5.2:free` was missing from OpenRouter's catalog (only
+  the paid `z-ai/glm-5.2` remains) while still enabled, after failing 3/3
+  attempts live.
+- **Proposal:** a scheduled workflow that reads OpenRouter's public
+  `GET /api/v1/models` (no key needed; each entry has `expiration_date`,
+  `pricing`, `context_length`, `created`) and diffs it against the pool.
+  Pool entries that are missing or have an `expiration_date` are flagged for
+  removal. New models from the allowed providers (openai, anthropic and google
+  on the funded key; `:free` ids on the free key) are flagged as candidates,
+  with prices and context already filled in. It posts a PR editing
+  `models.yaml` or an issue, and Hatim decides. Spec s5: removals are
+  surfaced, never automatic. It needs no state or secrets beyond
+  `GITHUB_TOKEN`, so it can be separate from the host. A merged change takes
+  effect at the next shift, which checks out `main` when it starts.
+- **Open (Hatim):** PR or issue, cadence (daily or weekly), and what makes a
+  new model a candidate (provider allowlist, tier from price).
+
 ## 6. Decisions pending with Hatim
 
 1. **Next budget horizon, before 19 Oct.** His rule: MiniBench round 2 first
@@ -273,6 +315,8 @@ rest is the lead's proposal with reasons.
    history, weights, digest, merges).
 4. **Referee design** (s5.1: ladder change, classifier model, categories).
 5. **Weight scoring rule** (s5.3).
+6. **Rationale dossier** (s5.6): IW dossier or ledger export.
+7. **Model-list workflow** (s5.7): PR or issue, cadence, candidate rule.
 
 ## 7. Known risks
 

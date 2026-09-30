@@ -419,3 +419,28 @@ Decisions (defaults in force until answered):
   comment, written by a cheap-tier call from both models' full rationales and
   the reconciled number, with today's summary lines as the fallback. Length
   and model still open (HANDOFF s5.0).
+
+### 2026-09-30
+
+- **First FE Fall questions, all forecast by v1.** Three opened 28-29 Sep, each
+  open 3 h (14:00-17:00 or 21:00-00:00 UTC), not long-window as assumed:
+  posts 45847 (NZ seat margin, discrete), 45844 (Kennedy Center, binary),
+  45848 (Bundibugyo Ebola, binary). vezo3 posted a provisional then a final on
+  each (claim to final 2-8 min), one comment each, `degraded = 0`.
+- **The NZ comment (post 45847) is public**; the other two are private. The
+  code path is the same for all three (SDK `post_question_comment`,
+  `is_private=True` by default). Not explained yet. Hypothesis: Metaculus
+  un-hides bot comments some time after close (NZ had been closed 39 h, the
+  others 8-15 h when checked). Re-check 45844 after 17:00 UTC 30 Sep.
+- **Live model outcomes (ledger):** fable 2/2 ok, opus 2/2, luna 1/1, astra 1 ok
+  and 3 failed attempts, gemini-3.1-pro-preview 3/3 failed, glm-5.2:free 3/3
+  failed. `z-ai/glm-5.2:free` is no longer in OpenRouter's catalog (only the
+  paid `z-ai/glm-5.2`) but is still enabled in the pool.
+- **v2 caught 1 of 3.** Every vezocontrol run since 24 Sep succeeds, but GitHub
+  fired its 20-min cron only ~5 times a day (29 Sep: 00:25, 05:55, 12:32,
+  18:14, 22:24). Runs at 13:30 and 12:32 came just before the NZ and Kennedy
+  windows opened, and the next ones after they closed. The 22:24 run forecast
+  45848 (15%, comment posted). Cause: GitHub's scheduled-run throttling, not a
+  bot bug; denser cron cannot fix it.
+- **Hatim added to the HANDOFF:** full rationales kept in a dossier (s5.6) and
+  a model list kept current, possibly by a separate workflow (s5.7).
