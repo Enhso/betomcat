@@ -49,6 +49,7 @@ from betomcat.comment import (
     render_report,
     render_synthesized_comment,
 )
+from betomcat.config import ASKNEWS_CYCLE_DAY, ASKNEWS_MONTHLY_CALLS
 from betomcat.forecast import (
     ForecastParseError,
     ModelResult,
@@ -91,6 +92,13 @@ RunStatus = Literal["submitted", "provisional", "missed", "failed", "skipped"]
 # models) rather than let replacement chase spares indefinitely.
 MAX_REPLACEMENTS_PER_RUN = 4
 
+# IW's default research makes two AskNews latest-news calls (title query and
+# keyword query, one call each); this is what one research is planned to spend.
+ASKNEWS_CALLS_PER_RESEARCH = 2
+
+# Asked of IW instead of its defaults once the AskNews cycle budget is spent.
+FREE_NEWS_PROVIDERS = ("google_news", "bing_news", "wikipedia")
+
 
 async def default_referee(**kwargs: object) -> str | None:
     """No-op referee stub (this chunk). Never changes the reconciled number."""
@@ -123,6 +131,7 @@ class PipelineDeps:
     rationale_timeout_final: float = 90.0
     rationale_timeout_provisional: float = 45.0
     rationale_close_margin: timedelta = timedelta(seconds=60)
+    asknews_monthly_calls: int = ASKNEWS_MONTHLY_CALLS
 
 
 @dataclass(frozen=True)
@@ -142,6 +151,32 @@ class _SubmittedForecast:
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def asknews_cycle_start(now: datetime) -> datetime:
+    """Start of the AskNews cycle containing `now`: 00:00 UTC on the cycle day.
+
+    A cycle runs from `ASKNEWS_CYCLE_DAY` of one month to the day before it in
+    the next, e.g. 22 Dec-21 Jan (the year rolls over with the month).
+    """
+    now = now.astimezone(UTC)
+    year, month = now.year, now.month
+    if now.day < ASKNEWS_CYCLE_DAY:
+        year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+    return datetime(year, month, ASKNEWS_CYCLE_DAY, tzinfo=UTC)
+
+
+def _asknews_allowed(deps: PipelineDeps) -> bool:
+    """Whether one more research still fits in this cycle's AskNews budget."""
+    spent = deps.ledger.asknews_calls_since(_iso(asknews_cycle_start(deps.clock())))
+    allowed = spent + ASKNEWS_CALLS_PER_RESEARCH <= deps.asknews_monthly_calls
+    logger.info(
+        "asknews budget: %d/%d used this cycle; asknews %s",
+        spent,
+        deps.asknews_monthly_calls,
+        "included" if allowed else "excluded",
+    )
+    return allowed
 
 
 def _question_key(question: MetaculusQuestion) -> str:
@@ -771,13 +806,24 @@ async def _run_pipeline_inner(
         deps.ledger.finish_run(run_id, status="missed", family_id=family.family_id)
         return PipelineOutcome("missed", run_id, "hard deadline hit before research")
 
+    asknews_allowed = _asknews_allowed(deps)
     research = await deps.iw.research(
         question=question.question_text,
         question_id=question_id,
         context=context,
         family_id=family.family_id,
         timeout=remaining,
+        providers=None if asknews_allowed else list(FREE_NEWS_PROVIDERS),
+        asknews_allowed=asknews_allowed,
     )
+    # IW's planned calls count even if AskNews or IW failed (we cannot tell
+    # from here, and over-counting is the safe side); the degraded fallback
+    # adds the call it made itself, if any.
+    asknews_calls = research.asknews_calls
+    if asknews_allowed:
+        asknews_calls += ASKNEWS_CALLS_PER_RESEARCH
+    if asknews_calls:
+        deps.ledger.record_asknews_calls(run_id, asknews_calls)
 
     if deps.clock() >= hard_deadline:
         deps.ledger.finish_run(

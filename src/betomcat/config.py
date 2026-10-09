@@ -24,6 +24,12 @@ DEFAULT_BUDGET_WINDOW_END = datetime(2026, 10, 19, tzinfo=UTC)
 DEFAULT_MINIBENCH_ROUND_BUDGET_USD = 50.0
 DEFAULT_MINIBENCH_BUSY_DAYS = 4
 
+# AskNews calls this bot may spend per monthly cycle (the 1,000/month quota is
+# shared with another bot; Hatim, 2026-10-09). A cycle starts on
+# ASKNEWS_CYCLE_DAY at 00:00 UTC, e.g. 22 Oct-21 Nov.
+ASKNEWS_MONTHLY_CALLS = 750
+ASKNEWS_CYCLE_DAY = 22
+
 
 def _bool_env(name: str, default: bool) -> bool:
     """Parse a boolean environment variable (`1/true/yes/on`, case-insensitive)."""
@@ -84,6 +90,8 @@ class Settings:
             busy phase.
         minibench_busy_days: Days after a round's `start_date` that count as
             its busy phase.
+        asknews_monthly_calls: AskNews calls this bot may spend per cycle; once
+            a research would exceed it, AskNews is left out of that research.
     """
 
     metaculus_token: str | None
@@ -109,6 +117,7 @@ class Settings:
     )
     minibench_round_budget_usd: float = DEFAULT_MINIBENCH_ROUND_BUDGET_USD
     minibench_busy_days: int = DEFAULT_MINIBENCH_BUSY_DAYS
+    asknews_monthly_calls: int = ASKNEWS_MONTHLY_CALLS
 
 
 def load_settings(env_path: Path | str | None = None) -> Settings:
@@ -141,4 +150,5 @@ def load_settings(env_path: Path | str | None = None) -> Settings:
         minibench_busy_days=_int_env(
             "MINIBENCH_BUSY_DAYS", DEFAULT_MINIBENCH_BUSY_DAYS
         ),
+        asknews_monthly_calls=_int_env("ASKNEWS_MONTHLY_CALLS", ASKNEWS_MONTHLY_CALLS),
     )
