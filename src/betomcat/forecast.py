@@ -40,6 +40,11 @@ SUMMARY_INSTRUCTION = (
 _SUMMARY_LINE_RE = re.compile(r"^[-#*\s]*summary\**\s*:\s*\**\s*(.*)$", re.IGNORECASE)
 _SUMMARY_WORD_CAP = 60
 
+_OPTION_LINE_RE = re.compile(
+    r"^\s*\|?\s*(?:[-*+•]\s+)?(?P<name>.+?)\s*[:|]\s*(?P<number>\d+(?:\.\d+)?)\s*%?"
+    r"\s*\|?\s*$"
+)
+
 
 class ForecastParseError(Exception):
     """Raised when a model's response could not be parsed into a forecast."""
@@ -164,18 +169,64 @@ async def forecast_multiple_choice(
     timeout: float,
     options: list[str],
 ) -> ModelResult:
-    """Call `model` and parse a per-option probability distribution."""
+    """Call `model` and parse a per-option probability distribution.
+
+    `PredictionExtractor` is tried first; `_parse_option_lines` is its backup.
+    """
     result = await llm.complete(model, prompt, timeout)
     try:
         predicted = PredictionExtractor.extract_option_list_with_percentage_afterwards(
             result.text, options
         )
-    except ValueError as exc:
-        raise ForecastParseError(f"{model.id}: {exc}") from exc
-    option_probs = {
-        po.option_name: po.probability for po in predicted.predicted_options
-    }
+    except ValueError as sdk_exc:
+        try:
+            probabilities = PredictionExtractor._normalize_option_probabilities(
+                _parse_option_lines(result.text, options)
+            )
+        except ValueError as exc:
+            raise ForecastParseError(
+                f"{model.id}: {sdk_exc}; exact-name backup: {exc}"
+            ) from exc
+        option_probs = dict(zip(options, probabilities, strict=True))
+    else:
+        option_probs = {
+            po.option_name: po.probability for po in predicted.predicted_options
+        }
     return _to_model_result(model, result, option_probs)
+
+
+def _parse_option_lines(text: str, options: list[str]) -> list[float]:
+    """Read `<option name>: NN%` lines whose name equals an option exactly.
+
+    `PredictionExtractor` lets leading punctuation through when it matches a
+    name, so with options "4" and ">4" the line `>4: 36%` also matches "4" and
+    every answer is rejected (Q46136, missed 2026-10-09). Exact equality cannot
+    confuse the two. The last line for each option wins: the prompt asks for
+    the final list at the end of the response.
+
+    Args:
+        text: The model's full response.
+        options: The question's option names, in order.
+
+    Returns:
+        The number given for each option, in the order of `options`.
+
+    Raises:
+        ValueError: If some option has no matching line.
+    """
+    index_by_name = {option.strip().casefold(): i for i, option in enumerate(options)}
+    found: dict[int, float] = {}
+    for line in text.splitlines():
+        match = _OPTION_LINE_RE.match(line.replace("**", "").replace("`", ""))
+        if match is None:
+            continue
+        index = index_by_name.get(match["name"].strip("\"' ").casefold())
+        if index is not None:
+            found[index] = float(match["number"])
+    missing = [option for i, option in enumerate(options) if i not in found]
+    if missing:
+        raise ValueError(f"no exact line for option(s) {missing}")
+    return [found[i] for i in range(len(options))]
 
 
 async def forecast_numeric(

@@ -121,6 +121,57 @@ async def test_forecast_multiple_choice_parses_options() -> None:
     assert result.value == pytest.approx({"Yes": 0.7, "No": 0.3})
 
 
+OVERLAPPING_OPTIONS = ["0 or 1", "2", "3", "4", ">4"]
+
+
+async def test_forecast_multiple_choice_parses_options_whose_names_overlap() -> None:
+    llm = FakeLLM(text="Reasoning...\n\n0 or 1: 10%\n2: 15%\n3: 20%\n4: 19%\n>4: 36%")
+
+    result = await forecast_multiple_choice(
+        MODEL, "prompt", llm, timeout=10.0, options=OVERLAPPING_OPTIONS
+    )
+
+    assert result.value == pytest.approx(
+        {"0 or 1": 0.10, "2": 0.15, "3": 0.20, "4": 0.19, ">4": 0.36}
+    )
+
+
+async def test_forecast_multiple_choice_overlap_reads_bulleted_bold_lines() -> None:
+    text = (
+        "Reasoning...\n\n"
+        "- **0 or 1**: 10%\n- **2**: 15%\n- **3**: 20%\n- **4**: 19%\n- **>4**: 36%"
+    )
+    llm = FakeLLM(text=text)
+
+    result = await forecast_multiple_choice(
+        MODEL, "prompt", llm, timeout=10.0, options=OVERLAPPING_OPTIONS
+    )
+
+    assert result.value == pytest.approx(
+        {"0 or 1": 0.10, "2": 0.15, "3": 0.20, "4": 0.19, ">4": 0.36}
+    )
+
+
+async def test_forecast_multiple_choice_overlap_uses_the_final_list() -> None:
+    text = "Draft:\n4: 40%\n>4: 60%\n\nFinal answer:\n4: 25%\n>4: 75%"
+    llm = FakeLLM(text=text)
+
+    result = await forecast_multiple_choice(
+        MODEL, "prompt", llm, timeout=10.0, options=["4", ">4"]
+    )
+
+    assert result.value == pytest.approx({"4": 0.25, ">4": 0.75})
+
+
+async def test_forecast_multiple_choice_overlap_missing_option_raises() -> None:
+    llm = FakeLLM(text="4: 40%\n>4: 60%")
+
+    with pytest.raises(ForecastParseError):
+        await forecast_multiple_choice(
+            MODEL, "prompt", llm, timeout=10.0, options=["3", "4", ">4"]
+        )
+
+
 async def test_forecast_numeric_parses_percentiles_into_cdf() -> None:
     question = NumericQuestion(
         question_text="How many widgets?",
