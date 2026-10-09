@@ -225,3 +225,58 @@ models:
     price_out: 0
     context_tokens: 32000
     notes: "Disabled 2026-09-30: removed from OpenRouter's catalog (only paid z-ai/glm-5.2 remains); failed 3/3 live attempts."
+
+  - id: apodex/apodex-1.1-mini:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 262144
+    notes: "Added by the weekly model check on 2026-10-09 (released 2026-10-01); not probed yet."
+
+  - id: openai/gpt-6-luna-pro
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0.1
+    price_out: 0.5
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-10-09 (released 2026-09-22); not probed yet."
+
+  - id: openai/gpt-6-sol-pro
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 2
+    price_out: 10
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-10-09 (released 2026-09-22); not probed yet."
+
+  - id: openai/gpt-6.1-sol
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 2
+    price_out: 10
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-10-09 (released 2026-09-29); not probed yet."
+
+  - id: openai/gpt-6.1-sol-pro
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 2
+    price_out: 10
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-10-09 (released 2026-09-29); not probed yet."
