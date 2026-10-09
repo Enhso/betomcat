@@ -68,6 +68,30 @@ models:
     context_tokens: 1000000
     notes: "Primary frontier peer."
 
+  - id: anthropic/claude-sonnet-5.5
+    tier: frontier
+    enabled: true
+    key: funded
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 2
+    price_out: 10
+    context_tokens: 1000000
+    notes: "Added 2026-10-09 (released 2026-09-28); probe ok on the funded key."
+
+  - id: anthropic/claude-haiku-5.5
+    tier: frontier
+    enabled: true
+    key: funded
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0.10
+    price_out: 0.50
+    context_tokens: 1000000
+    notes: "Added 2026-10-09 (released 2026-10-07); probe ok on the funded key."
+
   - id: openai/gpt-6-sol
     tier: frontier
     enabled: true
