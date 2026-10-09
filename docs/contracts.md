@@ -36,7 +36,7 @@ subcommand with `{"question": "..."}` on stdin.
   },
   "family": {"id": "fam:ecb-rate-decisions", "label": "ECB rate decisions",
              "last_seen": "2026-09-10T08:00:00Z"},
-  "providers": ["asknews_news", "asknews_wiki"],
+  "providers": ["asknews_news", "google_news", "bing_news", "wikipedia"],
   "news_since": "2026-09-10T08:00:00Z",
   "max_news": 12,
   "max_wiki": 3
@@ -44,9 +44,10 @@ subcommand with `{"question": "..."}` on stdin.
 ```
 
 Only `question` is required. Defaults: `question_id` null, `context` null,
-`family` null, `providers` = `["asknews_news", "asknews_wiki"]` when
-`ASKNEWS_API_KEY` is set, else `["wikipedia", "arxiv"]`; `news_since` null means
-the provider default look-back (AskNews: last 30 days of news); `max_news` 12,
+`family` null, `providers` = `["asknews_news", "google_news", "bing_news",
+"wikipedia"]` when `ASKNEWS_API_KEY` is set, else `["google_news", "bing_news",
+"wikipedia", "arxiv"]` (2026-10-09); `news_since` is still accepted and sent by
+iw-server but no provider reads it since 2026-10-09; `max_news` 12,
 `max_wiki` 3. AskNews rejects `n_articles` > 10 (HTTP 400), so the worker
 clamps news requests to 10 per query. Rust sets `news_since` = the family's `last_seen` when the family has
 prior history (gap fill, spec s1), else null.
@@ -54,7 +55,8 @@ prior history (gap fill, spec s1), else null.
 Optional `"extra_queries": [str]` (IW `adf3f72`, 2026-09-30; for the referee's
 targeted re-research, HANDOFF s5.1): worker type `list[str]`, default `[]`,
 NOT nullable (an explicit `null` fails validation), so Rust omits the key
-when there are none. Each entry adds one AskNews news search (B1).
+when there are none. Each entry adds one AskNews latest-news search (1 call)
+and one Google News search (B1).
 
 ### A2. `research` response (stdout) = ExtractionPayload v2
 
@@ -118,19 +120,33 @@ not "ECB October 2026 cut").
 
 ## B. Worker internals (C2)
 
-### B1. Providers (AskNews only: news + wiki endpoints, nothing else)
+### B1. Providers (blended, 2026-10-09: AskNews latest news + free sources)
+
+Status 2026-10-09: this section describes IW branch `wip/free-sources`
+(`4b0522c`) and betomcat branch `wip/asknews-budget` (`f072c96`), not yet
+merged; `main` still runs the old AskNews-only providers (A1 defaults too).
 
 - `asknews_news`: `GET https://api.asknews.app/v1/news/search` with
   `Authorization: Bearer $ASKNEWS_API_KEY`, params `query`, `n_articles`,
-  `return_type=dicts`, `method=nl`, `strategy=default`, and either
-  `start_timestamp` (unix seconds, from `news_since`) or `hours_back=720`.
+  `return_type=dicts`, `method=nl`, `strategy=latest news` (48 h, billed as
+  1 AskNews call; the old `hours_back=720` archive search was billed as 5).
   Two queries per question: the question title, and a keyword query built from
-  it, plus one per `extra_queries` entry (verbatim, same window and clamp).
+  it, plus one per `extra_queries` entry (verbatim, same clamp).
   Deduplicate by URL across all queries (first occurrence wins). Use each
   article's full text if present, else summary.
 - `asknews_wiki`: `GET https://api.asknews.app/v1/wiki/search`, params `query`,
-  `n_results`. Keep `title`, `url`, content/summary.
-- `wikipedia`, `arxiv`: unchanged, used only as the no-key default.
+  `n_results`. Keep `title`, `url`, content/summary. Out of the defaults since
+  2026-10-09; explicit requests only.
+- `google_news` (free): Google News RSS search for the keyword query (plus one
+  per `extra_queries` entry), `when:30d`, `mkt` pinned to en-US. One bundled
+  document per query: up to 20 `YYYY-MM-DD | source | headline` lines.
+- `bing_news` (free): Bing News RSS for the keyword query, `mkt=en-US`. One
+  bundled document of up to 10 `date | domain | title | snippet` lines, plus
+  full-text documents (trafilatura, >= 500 chars) for up to 3 articles.
+- `wikipedia`, `arxiv`: MediaWiki extracts and arXiv; `wikipedia` is in both
+  defaults, `arxiv` only in the no-key default.
+- The bot caps AskNews at 750 calls per cycle (cycles start on the 22nd): past
+  it, it sends `providers` without `asknews_news`.
 - Any provider error is logged and that provider contributes zero documents. The
   run fails (exit 1) only if every provider returns zero documents.
 

@@ -1,5 +1,7 @@
 # Agent Guidelines for Python Code Quality
 
+**Every session ends by updating `docs/defence-brief.md`** (Hatim, 2026-10-09): sections 1-2 when the design changed, plus a new dated evidence entry in section 3 with numbers from the ledger, the shift logs and Metaculus. Public repo: no forecasts, rationales or claims of open questions.
+
 This document provides guidelines for maintaining high-quality Python code. These rules MUST be followed by all AI coding agents and contributors.
 
 ## Your Core Principles

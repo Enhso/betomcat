@@ -1,14 +1,90 @@
 # Handoff: state of the deployment and what remains
 
-Updated 2026-09-30 (end of session). **Next session, in order:** s2 items
-a-e (verify today's pushes live), then the environment fixes of s2b (E1-E5,
-retro 2026-09-30, all approved by Hatim), then build s5.3 (weights, fully
-decided), then s5.1 stage 2 (referee, fully decided), then ask Hatim the
-open decisions of s5.7 before building it. Read this first, then
-`docs/BUILD_LOG.md` (full trace, every decision and why), `docs/contracts.md`
-(IW <-> bot interfaces, comment layout), `docs/spec.md` and `docs/brief.md`
-(intent). This file lists the state and everything still open, in the order
-the next session should take it.
+Updated 2026-10-09 (end of session). **Start with s0 below**: it supersedes
+the order given in older sections. Then `docs/defence-brief.md` (what the
+evidence says, updated every session), `docs/BUILD_LOG.md` (full trace,
+every decision and why; 2026-10-09 is the newest entry), `docs/contracts.md`
+(IW <-> bot interfaces), `docs/spec.md` and `docs/brief.md` (intent).
+Sections 1-10 are from 2026-09-30 and still hold except where s0 says
+otherwise.
+
+## 0. Session 2026-10-09: state and next steps
+
+### Where things stand
+
+- 75 questions opened 28 Sep-9 Oct (16 FE Fall, 59 MiniBench round 2); v1
+  submitted 74, missed 1 (MC parser bug, fixed). Nothing resolved yet.
+- **AskNews wallet empty since 5 Oct ~18:00 UTC** (1k calls/month, one
+  account shared by both bots; refills 22 Oct). Since then v1 forecasts from
+  the question text alone (30 forecasts so far) and v2 forecast nothing
+  (0/31) until its fix below.
+- Repos:
+
+| Repo | Live (`main`) | Parked work |
+|---|---|---|
+| betomcat | this session's docs commit on top of `2ee5231` (PR #1 merge) | `wip/asknews-budget` `f072c96` (pushed) |
+| IW | `adf3f72` (unchanged; what shifts run) | `wip/free-sources` `4b0522c` (pushed; the local checkout is ON this branch, Hatim's unstaged `prompt.txt` edit still there) |
+| vezocontrol | `13a2c86` blended research | none |
+
+Shipped today (all pushed to `main`): `e478dd2` exact-name backup parser for
+MC answers; `f510711` gemini-3.8-flash and qwen3.8-27b:free disabled;
+`9deaa42` claude-sonnet-5.5 and claude-haiku-5.5 added (pool: 8 paid, 3
+free); `b2aae71` weekly model check (`models.yml`, Mondays 06:17 UTC, opens
+one PR; Hatim merged its first, PR #1, as `2ee5231`: gpt-6.1-sol,
+gpt-6.1-sol-pro, gpt-6-luna-pro, gpt-6-sol-pro and apodex-1.1-mini:free
+added, pool now 12 paid and 4 free); vezocontrol `13a2c86` blended research.
+Not yet observed in a live shift: any of these.
+
+### Next, in order
+
+1. **Ship the research blend (v1 has had no research since 5 Oct).**
+   a. IW `wip/free-sources`: the free sources are verified (gate green, live
+      run 16 claims with AskNews 402ing). Unfinished follow-up in
+      `bing_news.py` (code done): full-text candidates = first 6 non-msn.com
+      items, fetched in parallel, keep the first 3 in feed order with >= 500
+      chars. Fix the two tests in `python/tests/test_bing_news.py` that
+      encode the old top-3 rule; add tests for the msn skip, the cap of 6 and
+      "first 3 that pass, in order" (incl. fewer than 3). Gates: python four
+      commands in `iw/python`, Rust fmt/clippy/test. Then merge to IW `main`
+      (never stage `prompt.txt`) and push: shifts pick it up at their next
+      start, which restores v1's research.
+   b. betomcat `wip/asknews-budget`: src done (750 calls per cycle from the
+      22nd, `asknews_calls` table, providers without `asknews_news` past the
+      budget, `_direct_fallback` = 1 latest-news AskNews call + Google News).
+      Missing: tests. Update `test_research_falls_back_on_5xx`; write the
+      budget tests (cycle start around the 22nd and Dec->Jan, under/over
+      budget, table on an old ledger) and fallback tests (latest-news params,
+      402 + Google ok, both fail, AskNews not allowed => no request). Review
+      the diff, gate, merge, push. Must land before 22 Oct.
+2. **Verify on live:** v2 forecasts again (its log shows `Found Research for
+   URL` with Google/Bing/Wikipedia sections; vezocontrol forecasts appear on
+   new questions); v1 ledger: draws of sonnet-5.5 / haiku-5.5, none of flash
+   / qwen; an MC question succeeds; after 1a ships, `runs.degraded` 0 again.
+   `V2_METACULUS_TOKEN` is now in `.env` (v2's forecasts are readable via
+   `/api/posts/?tournaments=<id>&forecaster_id=308853` with that token).
+3. **Before 19 Oct: next budget horizon** (s6.1, Hatim decides; still open).
+   Past `DEFAULT_BUDGET_WINDOW_END` the guard allows the whole remaining
+   credit ($81 on 9 Oct) in one day.
+4. **E1** (s2b): CI on push plus a test gate in `host.yml`. Today's pushes
+   went live with only local checks.
+5. **5.3 weights**, then **5.1 stage 2 referee** (both fully decided, s5),
+   then E2-E5, then 5.6, 5.2, 5.4, 5.5. Weights stay neutral below 10 scored
+   questions per model, so round 2 (resolves 15-19 Oct) alone barely moves
+   them.
+6. Small fix found today: a GitHub 500/timeout on a snapshot upload crashes
+   the shift (`host.py` `_periodic_snapshot` -> `state.upload_asset`; 3 and
+   7 Oct). The successor still starts, but catch and retry instead.
+
+### Decisions pending with Hatim
+
+- Next budget horizon (item 3).
+- GDELT (s5.8): parked, he will look closer.
+
+### Decided today (details in BUILD_LOG 2026-10-09)
+
+Defence brief every session; control gets the backup research too; weekly
+model check as a PR with the candidate rule; research blend = free sources
+always + AskNews latest-news only; AskNews split 75/25 (750/250 per cycle).
 
 ## 1. Where things stand
 
@@ -460,7 +536,10 @@ Original notes:
 - **Constraint:** the repo and its logs are public, so rationales are never
   committed or logged while a question is open.
 
-### 5.7 Keep the model pool current (Hatim, 2026-09-30)
+### 5.7 Keep the model pool current (Hatim, 2026-09-30) -- DECIDED 2026-10-09, being built
+
+Decisions in BUILD_LOG 2026-10-09: weekly, pull request, candidate rule. The notes below are the original proposal.
+
 
 - **The ask:** add models as they are released and remove them when they are
   retired, possibly through a separate Actions workflow.
@@ -482,6 +561,13 @@ Original notes:
   effect at the next shift, which checks out `main` when it starts.
 - **Open (Hatim):** PR or issue, cadence (daily or weekly), and what makes a
   new model a candidate (provider allowlist, tier from price).
+
+### 5.8 GDELT as a research source (Hatim, 2026-10-09, parked)
+
+- Wanted in the source roster. DOC 2.0 API: 8/9 requests 429 on 2026-10-09
+  (GDELT search under strain during a migration). Web ngrams TOC files could
+  back a 48 h title index (~150 MB download per shift). Numbers and options:
+  BUILD_LOG 2026-10-09. Hatim will look closer; retry the DOC API first.
 
 ## 6. Decisions pending with Hatim
 
@@ -611,4 +697,6 @@ Builders cannot write repo secrets or post to Metaculus (the classifier
 refuses); Hatim does those himself. Hatim has final say on major architectural and tradecraft
 decisions and can be persuaded with argued tradeoffs. Every decision goes in
 `docs/BUILD_LOG.md`. Replies to Hatim follow the LifeOS format (banner,
-closer, at most 15 prose lines unless he asks for depth).
+closer, at most 15 prose lines unless he asks for depth). Every session ends
+by updating `docs/defence-brief.md` with a dated evidence entry (Hatim,
+2026-10-09).

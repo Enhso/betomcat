@@ -530,3 +530,118 @@ Decisions (defaults in force until answered):
   s8 comments recipe was wrong (`on_post=` ignored) and is corrected. Out of
   repo: the SuccessClaimGate wording false positives and the golden-specs
   review are Hatim's.
+
+### 2026-10-09
+
+- **State after 9 unattended days** (ledger, shift logs, Metaculus; numbers in
+  `docs/defence-brief.md`): 75 questions opened (16 FE Fall, 59 MiniBench
+  round 2), 74 submitted, 1 missed. Shifts chained without a gap; two crashed
+  on a GitHub 500/timeout while uploading a snapshot (3 and 7 Oct), and the
+  successor started anyway. Nothing resolved yet.
+- **Defence brief (Hatim):** `docs/defence-brief.md` is updated every session
+  with what betomcat is, why it is built this way, and a dated evidence entry.
+- **AskNews wallet depleted** 5 Oct ~18:00 UTC (`402001 wallet balance is
+  depleted`); both bots use the same key (`setup_github.py` sets both secrets
+  from one `.env` value); v2 logged it from 17:54. 30 of 74 v1 submissions
+  since then had no research: IW fails ("every requested provider returned
+  zero documents") and the direct fallback hits the same wallet. Resets 22 Oct.
+- **The miss (Q46136, post 45954, MC):** options "4" and ">4". The SDK's
+  `PredictionExtractor` pattern starts with `\W*`, so `>4: 36%` also matches
+  "4" and every answer was rejected (21 attempts, 8 models). Fix: exact-name
+  backup parser `_parse_option_lines` in `forecast.py`, tried when the SDK
+  raises; last line per option wins. Replay of the 21 stored response tails:
+  19 parse; the other two had no final list or summed to 0.84.
+- **Pool:** `google/gemini-3.8-flash` (1/38 ok, Google 503 "high demand" on
+  the direct route) and `qwen/qwen3.8-27b:free` (4/36 ok, 404 "unavailable for
+  free") disabled. Enabled now: 6 paid, 3 free.
+- **Hatim's decision:** the control bot gets the backup research source too,
+  so the comparison stays like for like (it already deviates from the
+  unmodified template in its model pin and pacing).
+- **Found:** the bot never writes its own forecasts or resolutions back to IW
+  (`POST /api/history` exists, nothing calls it), so the prompts' history
+  section is always empty. Brief s4.4 wanted the bot's own record in the graph.
+- **v2 coverage** (with `V2_METACULUS_TOKEN`, added to `.env` 2026-10-09
+  16:00 UTC): 37/44 questions opened before the AskNews wallet ran dry, 0/31
+  since. Without research the template fails the question outright.
+- **Pool update (Hatim: reflect Anthropic's new models):**
+  `anthropic/claude-sonnet-5.5` (released 28 Sep) and `claude-haiku-5.5`
+  (7 Oct) added after a probe each on the funded key (`9deaa42`). `sonnet-5`
+  kept (pool as large as possible, 2026-09-22). Not added yet, left for the
+  weekly check's first PR: `openai/gpt-6.1-sol`, `gpt-6.1-sol-pro`,
+  `apodex/apodex-1.1-mini:free`. `dots-3-note-preview:free` has an OpenRouter
+  `expiration_date` of 2026-12-31.
+- **Weekly model check (HANDOFF s5.7), Hatim's decisions:** weekly; delivered
+  as a pull request editing `config/models.yaml` (merge = decision; decline by
+  setting `enabled: false` in the PR so it is not proposed again); candidates
+  are new `openai/*` and `anthropic/*` models plus any `:free` model released
+  after 2026-09-22, `:batch` variants excluded, Google left out. Enabled pool
+  entries missing from the catalog or expiring within 7 days are disabled in
+  the PR, never on `main` directly. Needs the repo setting "Allow GitHub
+  Actions to create and approve pull requests" (off on 2026-10-09).
+- **Backup research, Hatim's decisions:** blend (backup sources always mixed
+  in, not only on failure); free sources only (the funded OpenRouter key is
+  restricted to OpenAI and Anthropic models); patch v2's research step too.
+- **What used the AskNews wallet** (no usage API: `/v1/usage`, `/v1/me` etc.
+  404; reconstructed). Metaculus' resources page (post 38928): 1k calls a
+  month, 4k for the tournament, one account per person; a latest-news search
+  (48 h back) costs 1 call, an archive search 5. v1: 44 researched questions
+  to 5 Oct, each two news searches with `hours_back=720` (archive, 5 calls
+  each) plus one wiki search, ~11 calls a question, ~480, plus development
+  runs. v2: 63 template researches on 46 questions (failed questions are
+  re-researched every 5-min poll), each one latest + one archive search,
+  6 calls, ~380. Together ~1,000: the cap, not a leak. At ~165 questions a
+  month per bot, the cap allows ~3 calls per question per bot.
+- **AskNews split (Hatim: 75/25 or 80/20; lead took 75/25):** v1 750, v2 250
+  calls a month, months starting on the 22nd (account activated 22 Sep, offer
+  runs 4 months before renewal). v2 needs ~1 call a question (~170-200 a
+  month), so 200 would be tight in a busy month.
+- **Blend design (approved):** AskNews latest-news searches only (1 call): v1
+  two a question with a ledger counter that stops at 750, v2 one a question
+  with a per-question cache so its 5-min retries do not re-spend. Archive
+  searches (5 calls) and the AskNews wiki search dropped. Free sources in
+  every research: Google News RSS headlines (30 days), Bing News RSS snippets
+  plus full text of the top 3 articles (v1 only; v2's Gemma quota is tight),
+  Wikipedia. One source failing never fails research.
+- **GDELT DOC 2.0 rejected for now:** docs read (operators go inside `query`;
+  3-month window; no stated limit). 9 requests from this machine, spaced
+  12-30 s apart: 8 x 429 ("limit requests to one every 5 seconds"), each
+  taking ~10 s to refuse, and 1 x 200 with no articles. It throttles us
+  regardless of pace.
+- Builders started: IW providers `google_news` / `bing_news` + latest-news
+  AskNews (Rust `SOURCE_PROVIDERS` too); vezocontrol `blended_research.py`.
+  betomcat's budget counter follows.
+- **GDELT web ngrams (Hatim asked to try):** a temporary bulk-file stopgap
+  "while legacy search infrastructure is under strain" (Spanner migration),
+  which explains the DOC API's 429s. No query API, no article text. Files at
+  `data.gdeltproject.org/gdeltv5/weblegacy/ngrams/<YYYYMMDDHHMM00>.{toc.json,ngrams.txt}.gz`,
+  2 pairs every 15 min (~192 a day). Measured one pair (16:32 UTC 9 Oct):
+  TOC 387 KB gz, 2,601 articles (796 English) with `ID, date, img, lang,
+  title, url`; ngrams 9.8 MB gz, 1.26M rows (DOCID, quadgram, count). Per day
+  ~74 MB of TOC and ~1.9 GB of ngrams. Only usable as a title index (TOC):
+  e.g. each shift downloads the last 48 h of TOCs (~150 MB) into SQLite FTS.
+  Parked (Hatim to look closer later): Google News and Bing RSS already give
+  headlines; the DOC API is the better target once GDELT's migration ends.
+- **v2 blended research shipped** (vezocontrol `13a2c86`): `blended_research.py`
+  replaces the `asknews/news-summaries` branch: AskNews latest-news only
+  (1 call, `try_cache="1h"` as the template's hot call), Google News
+  headlines, Bing snippets (`setmkt=en-US`), Wikipedia extracts; per-question
+  cache in `.research_cache/` for the shift (empty results not cached).
+  Lead re-ran 56 tests; live check with AskNews 402: three free sections
+  came back (6.1k chars), the 402 logged as one warning. Takes effect from
+  v2's next shift. `httpx` is used but only transitively locked (not
+  declared in pyproject).
+- **IW free sources verified, then a follow-up:** lead re-ran the gates
+  (python 241, Rust 117) and one live research with real extraction
+  (OpenRouter, gpt-6-luna): exit 0 in 49 s, 16 claims / 16 evidence
+  (wikipedia 11, bing_news 5, google_news 0: its bundle passed relevance at
+  0.97 but yielded no claims of its own), AskNews 402 on every query. Bing
+  full text 0/3 (two msn.com pages, one bot wall), hence the follow-up: up to
+  6 non-msn candidates in parallel, keep the first 3 that extract.
+- **Session end (Hatim asked for a clean stop):** both builders stopped mid
+  test-writing. Parked on pushed branches, not on `main`: IW
+  `wip/free-sources` `4b0522c` (two Bing tests to update), betomcat
+  `wip/asknews-budget` `f072c96` (src done, tests to write). `main` of both
+  repos unchanged and green. HANDOFF s0 has the exact next steps.
+- **PR #1 merged by Hatim** (`2ee5231`), unchanged: the five proposed
+  models are in the pool (12 paid, 4 free enabled), unprobed; the ledger's
+  failure rates will show if any cannot be called on the funded key.
