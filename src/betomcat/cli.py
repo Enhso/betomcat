@@ -8,6 +8,8 @@ Subcommands:
     betomcat host                      -- run one GitHub Actions host shift.
     betomcat pull-state                -- download + decrypt the newest state
                                            snapshot for offline review.
+    betomcat check-models              -- compare the model pool with OpenRouter's
+                                           catalog and rewrite it in place.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import argparse
 import asyncio
 import logging
 import os
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import orjson
@@ -182,6 +184,13 @@ async def _cmd_pull_state(settings: Settings, out_dir: Path) -> None:
         print("no state snapshot found")
 
 
+def _cmd_check_models(pool_path: Path, body_out: Path | None) -> None:
+    from betomcat.models_check import fetch_catalog, run_check
+
+    result = run_check(pool_path, body_out, fetch_catalog(), datetime.now(UTC).date())
+    print(result.summary)
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="betomcat")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -211,6 +220,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     pull_state_parser.add_argument("--out-dir", required=True)
 
+    check_models_parser = subparsers.add_parser(
+        "check-models", help="compare the model pool with OpenRouter's catalog"
+    )
+    check_models_parser.add_argument("--pool", type=Path, default=DEFAULT_POOL_PATH)
+    check_models_parser.add_argument("--body-out", type=Path, default=None)
+
     return parser.parse_args(argv)
 
 
@@ -235,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "pull-state":
         asyncio.run(_cmd_pull_state(settings, Path(args.out_dir)))
+    elif args.command == "check-models":
+        _cmd_check_models(args.pool, args.body_out)
     return 0
 
 

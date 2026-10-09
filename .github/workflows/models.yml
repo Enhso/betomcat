@@ -1,0 +1,61 @@
+# Weekly model-pool check. Compares OpenRouter's public model catalog with
+# config/models.yaml (`betomcat check-models`): new OpenAI/Anthropic releases
+# and :free models are proposed as additions, enabled entries that vanished
+# from the catalog or expire within a week are proposed as disablings. The
+# result goes into a pull request rather than straight to main so the owner
+# decides by merging; the live shifts (host.yml) re-read the pool file, so a
+# merge takes effect from the next shift. The branch is force-pushed and its
+# open PR edited each week, so there is never more than one pending proposal.
+# Needs "Allow GitHub Actions to create and approve pull requests" enabled in
+# the repository's Actions settings.
+name: models
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout betomcat
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync betomcat dependencies
+        run: uv sync
+
+      - name: Compare the pool with the OpenRouter catalog
+        run: uv run betomcat check-models --body-out "$RUNNER_TEMP/pr-body.md"
+
+      - name: Open or update the proposal pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- config/models.yaml; then
+            echo "pool is current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C models/weekly-check
+          git commit -m "config: weekly model check $(date -u +%F)" -- config/models.yaml
+          git push --force origin models/weekly-check
+          pr=$(gh pr list --head models/weekly-check --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --body-file "$RUNNER_TEMP/pr-body.md"
+          else
+            gh pr create --base main --head models/weekly-check \
+              --title "Weekly model check" --body-file "$RUNNER_TEMP/pr-body.md"
+          fi

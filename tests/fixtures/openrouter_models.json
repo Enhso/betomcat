@@ -1,0 +1,341 @@
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-5.5",
+      "name": "Anthropic: Claude Sonnet 5.5",
+      "created": 1790618686,
+      "context_length": 1000000,
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "web_search": "0.01",
+        "input_cache_read": "0.0000001",
+        "input_cache_write": "0.0000025",
+        "input_cache_write_1h": "0.000004"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "anthropic/claude-haiku-5.5",
+      "name": "Anthropic: Claude Haiku 5.5",
+      "created": 1791397883,
+      "context_length": 1000000,
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000005",
+        "web_search": "0.01",
+        "input_cache_read": "0.00000001",
+        "input_cache_write": "0.000000125",
+        "input_cache_write_1h": "0.0000002",
+        "overrides": [
+          {
+            "min_prompt_tokens": 100000,
+            "prompt": "0.0000005",
+            "completion": "0.0000025",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.000000625",
+            "input_cache_write_1h": "0.000001"
+          }
+        ]
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "openai/gpt-6.1-sol",
+      "name": "OpenAI: GPT-6.1 Sol",
+      "created": 1790702882,
+      "context_length": 1050000,
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "web_search": "0.01",
+        "input_cache_read": "0.0000001",
+        "input_cache_write": "0.0000025",
+        "overrides": [
+          {
+            "min_prompt_tokens": 272000,
+            "prompt": "0.000004",
+            "completion": "0.000015",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.000005"
+          }
+        ]
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "openai/gpt-6.1-sol-pro",
+      "name": "OpenAI: GPT-6.1 Sol Pro",
+      "created": 1790702886,
+      "context_length": 1050000,
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.00001",
+        "web_search": "0.01",
+        "input_cache_read": "0.0000001",
+        "input_cache_write": "0.0000025",
+        "overrides": [
+          {
+            "min_prompt_tokens": 272000,
+            "prompt": "0.000004",
+            "completion": "0.000015",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.000005"
+          }
+        ]
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "openai/gpt-6.1-sol:batch",
+      "name": "OpenAI: GPT-6.1 Sol (batch)",
+      "created": 1790702882,
+      "context_length": 1050000,
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000005",
+        "web_search": "0.01",
+        "input_cache_read": "0.00000005",
+        "input_cache_write": "0.00000125",
+        "overrides": [
+          {
+            "min_prompt_tokens": 272000,
+            "prompt": "0.000002",
+            "completion": "0.0000075",
+            "input_cache_read": "0.0000001",
+            "input_cache_write": "0.0000025"
+          }
+        ]
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "apodex/apodex-1.1-mini:free",
+      "name": "Apodex: Apodex 1.1 Mini (free)",
+      "created": 1790875335,
+      "context_length": 262144,
+      "pricing": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "supported_parameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "name": "Dots Studio: Dots3-Note Preview (free)",
+      "created": 1786680361,
+      "context_length": 512000,
+      "pricing": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "expiration_date": "2026-12-31"
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b:free",
+      "name": "NVIDIA: Nemotron 3 Super (free)",
+      "created": 1773245239,
+      "context_length": 262144,
+      "pricing": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "anthropic/claude-opus-4.7",
+      "name": "Anthropic: Claude Opus 4.7",
+      "created": 1776351100,
+      "context_length": 1000000,
+      "pricing": {
+        "prompt": "0.000005",
+        "completion": "0.000025",
+        "web_search": "0.01",
+        "input_cache_read": "0.0000005",
+        "input_cache_write": "0.00000625",
+        "input_cache_write_1h": "0.00001"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "stop",
+        "structured_outputs",
+        "tool_choice",
+        "tools",
+        "verbosity"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "google/gemini-3.8-flash",
+      "name": "Google: Gemini 3.8 Flash",
+      "created": 1788362056,
+      "context_length": 1048576,
+      "pricing": {
+        "prompt": "0.00000075",
+        "completion": "0.00000375",
+        "image": "0.00000075",
+        "audio": "0.00000075",
+        "input_audio_cache": "0.000000075",
+        "web_search": "0.014",
+        "internal_reasoning": "0.00000375",
+        "input_cache_read": "0.000000075",
+        "input_cache_write": "0.0000000416666666666667"
+      },
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "expiration_date": null
+    },
+    {
+      "id": "mistralai/mistral-large-4-0",
+      "name": "Mistral: Mistral Large 4",
+      "created": 1791294122,
+      "context_length": 1048576,
+      "pricing": {
+        "prompt": "0.00000068",
+        "completion": "0.00000209",
+        "input_cache_read": "0.00000007"
+      },
+      "supported_parameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logprobs",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p"
+      ],
+      "expiration_date": null
+    }
+  ]
+}
