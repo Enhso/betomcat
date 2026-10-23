@@ -1,90 +1,131 @@
 # Handoff: state of the deployment and what remains
 
-Updated 2026-10-09 (end of session). **Start with s0 below**: it supersedes
+Updated 2026-10-23 (end of session). **Start with s0 below**: it supersedes
 the order given in older sections. Then `docs/defence-brief.md` (what the
-evidence says, updated every session), `docs/BUILD_LOG.md` (full trace,
-every decision and why; 2026-10-09 is the newest entry), `docs/contracts.md`
+evidence says, updated every lead session), `docs/BUILD_LOG.md` (full trace,
+every decision and why; 2026-10-23 is the newest entry), `docs/contracts.md`
 (IW <-> bot interfaces), `docs/spec.md` and `docs/brief.md` (intent).
-Sections 1-10 are from 2026-09-30 and still hold except where s0 says
-otherwise.
+Sections 1-10 are from 2026-09-30 and still hold except where s0 or a status
+line says otherwise.
 
-## 0. Session 2026-10-09: state and next steps
+## 0. Session 2026-10-23: state and next steps
 
 ### Where things stand
 
-- 75 questions opened 28 Sep-9 Oct (16 FE Fall, 59 MiniBench round 2); v1
-  submitted 74, missed 1 (MC parser bug, fixed). Nothing resolved yet.
-- **AskNews wallet empty since 5 Oct ~18:00 UTC** (1k calls/month, one
-  account shared by both bots; refills 22 Oct). Since then v1 forecasts from
-  the question text alone (30 forecasts so far) and v2 forecast nothing
-  (0/31) until its fix below.
+- 184 questions so far (FE Fall since 28 Sep, MiniBench rounds 2 and 3); v1
+  submitted 183. **MiniBench round 2 finalized: vezo3 49/306** (peer 272),
+  vezocontrol 186/306 (32 of 57 covered). Round 3 (project 33132, opened 19
+  Oct, closes 6 Nov): vezo3 58/58, vezocontrol 21/58 (Gemma free-tier quota
+  on burst days, BUILD_LOG 2026-09-24). FE Fall: 2 resolved.
+- v1 had no research from 5 to 22 Oct (137/183 forecasts). Cause: the IW
+  free-sources merge was never pushed. Pushed today; the first shift after
+  ~20:50 UTC 23 Oct is the first to run it.
+- Credit $69.64 (key limit $650, no reset). Budget now paced to 6 Jan 2027,
+  $15 per MiniBench round. Hatim emails Ben Wilson about a renewal (draft
+  given in chat).
 - Repos:
 
-| Repo | Live (`main`) | Parked work |
+| Repo | Live (`main`) | Parked |
 |---|---|---|
-| betomcat | this session's docs commit on top of `2ee5231` (PR #1 merge) | `wip/asknews-budget` `f072c96` (pushed) |
-| IW | `adf3f72` (unchanged; what shifts run) | `wip/free-sources` `4b0522c` (pushed; the local checkout is ON this branch, Hatim's unstaged `prompt.txt` edit still there) |
-| vezocontrol | `13a2c86` blended research | none |
+| betomcat | `086406d` referee + this session's docs commit | `wip/summary` `eb1b1d5` (summary email + alerts, built, not merged); old `wip/asknews-budget` (shipped as `61d30ac`, branch can go) |
+| IW | `486147a` (free sources `4c911b2`, README `f583f24`, CI) | none; Hatim's unstaged `prompt.txt` still in the local checkout, never stage it |
+| vezocontrol | `13a2c86` | none |
 
-Shipped today (all pushed to `main`): `e478dd2` exact-name backup parser for
-MC answers; `f510711` gemini-3.8-flash and qwen3.8-27b:free disabled;
-`9deaa42` claude-sonnet-5.5 and claude-haiku-5.5 added (pool: 8 paid, 3
-free); `b2aae71` weekly model check (`models.yml`, Mondays 06:17 UTC, opens
-one PR; Hatim merged its first, PR #1, as `2ee5231`: gpt-6.1-sol,
-gpt-6.1-sol-pro, gpt-6-luna-pro, gpt-6-sol-pro and apodex-1.1-mini:free
-added, pool now 12 paid and 4 free); vezocontrol `13a2c86` blended research.
-Not yet observed in a live shift: any of these.
+Shipped today, all on `main` and live from the next shift: IW free sources;
+`92db283` budget horizon and $15 round allowance; `61d30ac` AskNews 750-call
+cycle budget and blended direct fallback; `43d6b09` + IW `486147a` E1 (CI on
+both repos, test gate before each shift); `7685db9` daily model weights
+(field-relative peer score, see BUILD_LOG); `086406d` referee gate (5.1 stage
+2); PR #2 (model check) merged by Hatim. **None of these has been observed in
+a live shift yet.**
 
 ### Next, in order
 
-1. **Ship the research blend (v1 has had no research since 5 Oct).**
-   a. IW `wip/free-sources`: the free sources are verified (gate green, live
-      run 16 claims with AskNews 402ing). Unfinished follow-up in
-      `bing_news.py` (code done): full-text candidates = first 6 non-msn.com
-      items, fetched in parallel, keep the first 3 in feed order with >= 500
-      chars. Fix the two tests in `python/tests/test_bing_news.py` that
-      encode the old top-3 rule; add tests for the msn skip, the cap of 6 and
-      "first 3 that pass, in order" (incl. fewer than 3). Gates: python four
-      commands in `iw/python`, Rust fmt/clippy/test. Then merge to IW `main`
-      (never stage `prompt.txt`) and push: shifts pick it up at their next
-      start, which restores v1's research.
-   b. betomcat `wip/asknews-budget`: src done (750 calls per cycle from the
-      22nd, `asknews_calls` table, providers without `asknews_news` past the
-      budget, `_direct_fallback` = 1 latest-news AskNews call + Google News).
-      Missing: tests. Update `test_research_falls_back_on_5xx`; write the
-      budget tests (cycle start around the 22nd and Dec->Jan, under/over
-      budget, table on an old ledger) and fallback tests (latest-news params,
-      402 + Google ok, both fail, AskNews not allowed => no request). Review
-      the diff, gate, merge, push. Must land before 22 Oct.
-2. **Verify on live:** v2 forecasts again (its log shows `Found Research for
-   URL` with Google/Bing/Wikipedia sections; vezocontrol forecasts appear on
-   new questions); v1 ledger: draws of sonnet-5.5 / haiku-5.5, none of flash
-   / qwen; an MC question succeeds; after 1a ships, `runs.degraded` 0 again.
-   `V2_METACULUS_TOKEN` is now in `.env` (v2's forecasts are readable via
-   `/api/posts/?tournaments=<id>&forecaster_id=308853` with that token).
-3. **Before 19 Oct: next budget horizon** (s6.1, Hatim decides; still open).
-   Past `DEFAULT_BUDGET_WINDOW_END` the guard allows the whole remaining
-   credit ($81 on 9 Oct) in one day.
-4. **E1** (s2b): CI on push plus a test gate in `host.yml`. Today's pushes
-   went live with only local checks.
-5. **5.3 weights**, then **5.1 stage 2 referee** (both fully decided, s5),
-   then E2-E5, then 5.6, 5.2, 5.4, 5.5. Weights stay neutral below 10 scored
-   questions per model, so round 2 (resolves 15-19 Oct) alone barely moves
-   them.
-6. Small fix found today: a GitHub 500/timeout on a snapshot upload crashes
-   the shift (`host.py` `_periodic_snapshot` -> `state.upload_asset`; 3 and
-   7 Oct). The successor still starts, but catch and retry instead.
+1. **Verify the first shifts after 20:50 UTC 23 Oct** (`host.yml` runs, then
+   `pull-state` into a temp dir):
+   - the `Test gate` step ran green before the host step;
+   - IW research not degraded: `runs.degraded` 0 on new runs, and IW
+     `source` rows with providers `google_news` / `bing_news`;
+   - `asknews_calls` rows appear (2 per research), no 402s in the log;
+   - `weights.json` exists in the snapshot with `updated_at` today, and the
+     log line `weight update: fetched=... by_method={'peer': ...}`;
+   - on the first diverged question: a `referee_decisions` row, a
+     provisional then a final in `submissions`, exactly one comment;
+   - `nemotron-3.5-super-vl:free` draws succeed; apodex, minimax, xing no
+     longer drawn.
+2. **Finish the summary email and alerts** (`wip/summary`, report at
+   `/home/hatim/projects/betomcat-wt/summary-report.md`, worktree
+   `/home/hatim/projects/betomcat-wt/summary`). A real local render
+   (`betomcat summary --out <file>` with `.env`, `GITHUB_TOKEN=$GITHUB_ADMIN_TOKEN`,
+   `GITHUB_REPOSITORY=Enhso/betomcat`) worked: 8 sections, standings,
+   per-model table, credit and pool changes all filled from live data. Fix
+   before merging:
+   - `summary.yml` `permissions: contents: write` (draft `state` release is
+     invisible to a read-only token; restore would then try to create a
+     release).
+   - Seed the watch state's `rounds` with 33129 as well as 33132, so "latest
+     finalized round" shows round 2.
+   - Burn rate: `byok_usage_weekly` is likely the current UTC week, so
+     `weekly / 7` is wrong on Mondays. Proposed: the hourly watch stores one
+     `limit_remaining` sample per UTC day in its state; the summary uses the
+     7-day difference (falls back to `byok_usage_monthly` / days elapsed).
+   - "Model weights: unavailable" in the render is expected until a live
+     shift writes `weights.json`; re-check after item 1.
+   Then merge, push, and trigger `summary.yml` once by `workflow_dispatch`
+   (Hatim may need to click it: the classifier refuses some external
+   actions) to see the real email; `watch.yml` runs hourly by itself and its
+   first run mails whatever is active.
+3. **Pending decision (Hatim): the referee's Luna fallback.** HANDOFF s5.1
+   contradicts itself: its design paragraph says a failed Luna call
+   re-researches without extra queries and with a fixed diagnosis; its test
+   list says the first average stands. Built: the design paragraph (re-run
+   goes ahead). One-line switch in `pipeline._rerun`: after
+   `plan = await write_targeted_queries(...)`, `if not plan.queries: return
+   False`. Also flagged to Hatim: the lead's added rule (no re-run while the
+   budget guard excludes either drawn model).
+4. **v2 data archive** (Hatim, decided): a scheduled job saves each finished
+   vezocontrol run's raw log (Actions logs expire after 90 days, first ones
+   ~22 Dec) and its Metaculus forecasts and comments (`V2_METACULUS_TOKEN`
+   is an Actions secret on betomcat now). Parse later, for the dashboard.
+5. **Improvement-scout skill** (Hatim): a project skill he fires by hand that
+   searches fora and blogs for ways to improve the bots; memos go to a
+   gitignored `scout/` directory. Search for sources first rather than list
+   them from memory; write it with the `writing-for-agents` skill.
+6. Then E2-E5, 5.6, 5.2, 5.5 (s2b, s5). The snapshot-upload crash fix
+   (`host.py` `_periodic_snapshot` -> `state.upload_asset` on a GitHub
+   500/timeout; seen 3 and 7 Oct) is still open.
 
-### Decisions pending with Hatim
+### Later (decided 2026-10-23, design first)
 
-- Next budget horizon (item 3).
-- GDELT (s5.8): parked, he will look closer.
+- **Bot dashboard:** a local app following vezo3 and vezocontrol with
+  model-by-model comparison (performance, statistics, cost, models used;
+  more features to think through). Design with the `impeccable` skill set,
+  drawing on what exists online. Its data layer is the summary's
+  (`sources.py`, ledger reads) plus the v2 archive.
+- **IW visualization tool:** needs its own design (IW README, Phase 2).
 
-### Decided today (details in BUILD_LOG 2026-10-09)
+### Known gaps found today
 
-Defence brief every session; control gets the backup research too; weekly
-model check as a PR with the candidate rule; research blend = free sources
-always + AskNews latest-news only; AskNews split 75/25 (750/250 per cycle).
+- Ledger AskNews counts start at 0 for this cycle; ~20 calls spent 22-23 Oct
+  by the old code are not in the table. A referee re-run cancelled at soft
+  mid-research spends AskNews calls that are never recorded.
+- `runs.dossier_id` keeps the first dossier when the final came from the
+  referee's re-research.
+- Weights assume `my_forecasts.latest` is the spot-scored forecast (spot time
+  equals close on every post seen).
+- The watch's chain check cannot see a mid-shift crash followed by an
+  auto-dispatched successor.
+
+### Decided today (details in BUILD_LOG 2026-10-23)
+
+Push IW; budget horizon 6 Jan and $15 rounds; renewal email; summary by
+email (Resend; `RESEND_API_KEY`, `SUMMARY_TO`, `V2_METACULUS_TOKEN` are in
+`.env` and Actions secrets), weekly Monday 07:00 UTC plus alerts (credit
+$15/$5, chain broken, failed shift, model-check PR, round scored); weights
+scored against the field via vezo3's peer score (CP hidden from bots);
+dashboard and IW visualization later with designs; v2 raw archive; scout
+memos gitignored; defence-brief rule binds the lead only; Haiku subagents
+report inline (`~/CLAUDE.md`).
 
 ## 1. Where things stand
 
@@ -193,7 +234,7 @@ Do these before new features: E1 protects the live bot, E2 unblocks
 builders, E3 and E5 make every later session cheaper. Builders do the
 mechanical parts; the lead verifies as usual.
 
-- **E1. Tests gate every push and every shift.** Today no CI runs the check
+- **E1. DONE 2026-10-23 (`43d6b09`, IW `486147a`). Tests gate every push and every shift.** Today no CI runs the check
   suite in either repo, and `host.yml` forecasts from whatever is on `main`,
   so a broken commit goes straight into live forecasting. Add `ci.yml` to
   betomcat (the four-command suite, s1) and to IW (Rust: fmt, clippy
@@ -352,7 +393,7 @@ original brief follows for reference.
 - **Check before shipping:** a local dry run (s8) prints the comment; compare
   old and new on the same bot-testing-area question and show Hatim.
 
-### 5.1 Referee gate (spec s5) -- DESIGN DECIDED 2026-09-30, stage 2 next
+### 5.1 Referee gate (spec s5) -- DONE 2026-10-23 (`086406d`); Luna-fallback decision open (s0 item 3)
 
 All design decisions are Hatim's (BUILD_LOG 2026-09-30); nothing is open.
 Stage 1 (IW `extra_queries`) was built on 2026-09-30 (s1 table). **Stage 2
@@ -431,7 +472,7 @@ is the next build**: brief one builder with this section.
 - **Privacy:** the repo and its logs are public; Hatim's forecasts must never
   be logged.
 
-### 5.3 Daily weight update (spec s5) -- DECIDED 2026-09-30, build FIRST next session
+### 5.3 Daily weight update (spec s5) -- DONE 2026-10-23 (`7685db9`), scored against the field, not the CP (BUILD_LOG 2026-10-23)
 
 **Status:** all decisions made (below); a builder was started on 2026-09-30
 but produced no code (it stalled when the session left auto mode) and was
@@ -495,7 +536,7 @@ Original notes:
 - **Data arrives:** FE Fall questions resolve over weeks to months; MiniBench
   round 2 resolves ~15-19 Oct. Build it before then.
 
-### 5.4 Weekly digest (spec s8)
+### 5.4 Weekly digest (spec s8) -- REPLACED 2026-10-23 by the summary email and alerts (s0 item 2)
 
 - **What:** one GitHub issue per week on `Enhso/betomcat` (Hatim chose an
   issue over email, BUILD_LOG 2026-09-22). Start maximal, prune later: pool
@@ -536,7 +577,7 @@ Original notes:
 - **Constraint:** the repo and its logs are public, so rationales are never
   committed or logged while a question is open.
 
-### 5.7 Keep the model pool current (Hatim, 2026-09-30) -- DECIDED 2026-10-09, being built
+### 5.7 Keep the model pool current (Hatim, 2026-09-30) -- DONE (`b2aae71`, weekly PR)
 
 Decisions in BUILD_LOG 2026-10-09: weekly, pull request, candidate rule. The notes below are the original proposal.
 
@@ -571,7 +612,7 @@ Decisions in BUILD_LOG 2026-10-09: weekly, pull request, candidate rule. The not
 
 ## 6. Decisions pending with Hatim
 
-1. **Next budget horizon, before 19 Oct.** His rule: MiniBench round 2 first
+1. ~~Next budget horizon~~: decided 2026-10-23 (6 Jan 2027, $15 rounds). Original note: His rule: MiniBench round 2 first
    (about half the ~$99), the rest to FE Fall until an extension. Measured on
    the first three live questions: ~$0.53 per question (a floor: failed
    attempts carry no cost), so a 60-question round is ~$32; round 2 is paced

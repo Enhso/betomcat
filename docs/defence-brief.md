@@ -42,7 +42,10 @@ What happens when a question opens:
    questions have resolved, better-scoring models will be drawn more often.
 4. Both models forecast from the same research. The first forecast in is
    submitted at once as a provisional; when the second arrives, the weighted
-   average of the two replaces it.
+   average of the two replaces it. If the two disagree widely and a
+   classifier finds a fixable cause (stale research or a misread resolution
+   rule), the bot researches the disagreement and both models forecast once
+   more; the weighted average of the second round is the final.
 5. One comment is posted with the forecast that stands: a rationale of at
    most 300 words, written by a cheap model from the two models' reasoning.
    The full record (both rationales, claims used, costs, errors) goes into an
@@ -109,8 +112,9 @@ tournament.
   the community prediction from bot accounts. The field's average is backed
   out of the bot's own peer score, which is also what the tournament ranks
   on. Weights went live on 23 Oct.
-- Not built yet: the disagreement referee, Hatim's own forecasting history as
-  context, the weekly digest, suggestions for merging families.
+- Not built yet: Hatim's own forecasting history as context, the weekly
+  summary email (built 23 Oct, not yet deployed), suggestions for merging
+  families. The disagreement referee went live on 23 Oct.
 - The bot's own forecasts and their outcomes are never written back into the
   Workbench. They live only in the ledger, so the Workbench cannot yet show a
   model how the bot did on similar questions before.

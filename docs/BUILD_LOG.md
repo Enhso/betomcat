@@ -723,3 +723,30 @@ Decisions (defaults in force until answered):
   Assumes `my_forecasts.latest` is the spot-scored forecast (spot time =
   close on every post seen). `resolution: null` on a resolved post is
   treated as pending (refetched weekly), never as annulled.
+- **5.1 referee stage 2 shipped** (`086406d`). Sonnet builder, 70 tests
+  (481 total), lead reviewed the ladder: one `referee_decisions` row per run
+  (guarded by `referee_settled`), the label-only path and every referee
+  failure fail open. Ladder: diverged before soft -> provisional (weighted
+  average, no comment) -> Jev class -> for the two re-run classes a budget
+  check, Luna queries and diagnosis, IW re-research with `extra_queries`,
+  both models re-forecast once concurrently (prompt never carries either
+  first-round rationale) -> final from the re-forecasts; failures and
+  soft/hard cut-offs leave the provisional with its comment at hard. Lead's
+  addition (flagged to Hatim): no re-run while the budget guard excludes a
+  drawn model. Measured before building: the two models diverge past the
+  bars on 27/91 binary and 8/17 MC questions (ledger to 23 Oct). **Open
+  (Hatim):** s5.1 contradicts itself on a Luna failure; built as its design
+  paragraph says (re-run with no extra queries and a fixed diagnosis).
+- **Summary email and alerts built, parked** on `wip/summary` (`eb1b1d5`,
+  530 tests green after rebase on `086406d`). Real local render from live
+  data worked (standings, per-model table, credit, pool changes). Before
+  merging: `summary.yml` needs `contents: write` (draft release), seed watch
+  `rounds` with 33129, replace `byok_usage_weekly / 7` with a 7-day
+  difference of daily `limit_remaining` samples kept by the watch. HANDOFF
+  s0 item 2.
+- **Session end** (Hatim asked for a clean stop at ~18:05 UTC): no agent
+  running; `main` green on CI; worktree `/home/hatim/projects/betomcat-wt/summary`
+  kept for the summary fixes. Snags and wants of the five builders are in
+  `~/snags.md`. Proposed to Hatim, not applied: the Write tool refused a
+  Sonnet builder's report file too, so the inline-report exception in
+  `~/CLAUDE.md` may need to cover every subagent, not only Haiku.
