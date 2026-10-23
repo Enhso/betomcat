@@ -68,6 +68,7 @@ def build_deps(settings: Settings, dry_run: bool) -> PipelineDeps:
         soft_threshold=timedelta(minutes=settings.soft_threshold_min),
         hard_threshold=timedelta(minutes=settings.hard_threshold_min),
         budget=budget,
+        asknews_monthly_calls=settings.asknews_monthly_calls,
     )
 
 

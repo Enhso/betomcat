@@ -450,3 +450,62 @@ def test_ledger_adds_round_starts_table_to_a_snapshot_that_predates_it(
         )
     finally:
         ledger.close()
+
+
+def test_asknews_calls_since_sums_only_calls_at_or_after_the_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        assert ledger.asknews_calls_since("2026-10-22T00:00:00Z") == 0
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        ledger.upsert_question("metaculus:2", "Will Y?", "binary", None, None)
+        first_run = ledger.start_run("metaculus:1")
+        second_run = ledger.start_run("metaculus:2")
+        recorded = [
+            ("2026-10-21T23:59:59Z", first_run.id, 5),
+            ("2026-10-22T00:00:00Z", first_run.id, 7),
+            ("2026-10-25T12:00:00Z", second_run.id, 11),
+        ]
+        for recorded_at, run_id, calls in recorded:
+            with monkeypatch.context() as patch:
+                patch.setattr("betomcat.ledger._now_iso", lambda at=recorded_at: at)
+                ledger.record_asknews_calls(run_id, calls)
+
+        assert ledger.asknews_calls_since("2026-10-22T00:00:00Z") == 18
+        assert ledger.asknews_calls_since("2026-10-22T00:00:01Z") == 11
+        assert ledger.asknews_calls_since("2026-10-21T00:00:00Z") == 23
+        assert ledger.asknews_calls_since("2026-10-26T00:00:00Z") == 0
+    finally:
+        ledger.close()
+
+
+def test_ledger_adds_asknews_calls_table_to_a_file_that_predates_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.sqlite"
+    old = Ledger(path)
+    old.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+    run = old.start_run("metaculus:1")
+    old.close()
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE asknews_calls")
+    raw.commit()
+    tables_before = {name for (name,) in raw.execute("SELECT name FROM sqlite_master")}
+    raw.close()
+    assert "asknews_calls" not in tables_before
+
+    ledger = Ledger(path)
+    try:
+        assert ledger.asknews_calls_since("2000-01-01T00:00:00Z") == 0
+        ledger.record_asknews_calls(run.id, 3)
+        assert ledger.asknews_calls_since("2000-01-01T00:00:00Z") == 3
+        assert ledger.get_question("metaculus:1") is not None
+    finally:
+        ledger.close()
+
+    reopened = Ledger(path)
+    try:
+        assert reopened.asknews_calls_since("2000-01-01T00:00:00Z") == 3
+    finally:
+        reopened.close()

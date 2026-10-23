@@ -116,6 +116,18 @@ def test_load_settings_reads_minibench_round_env_vars(
     assert settings.minibench_busy_days == 3
 
 
+def test_load_settings_reads_asknews_monthly_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ASKNEWS_MONTHLY_CALLS", "600")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+
+    settings = load_settings(empty_env)
+
+    assert settings.asknews_monthly_calls == 600
+
+
 def test_load_settings_blank_minibench_env_vars_use_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2,10 +2,12 @@
 
 Talks to IW over localhost HTTP (contracts.md s C). If IW is unreachable
 (connection refused) or returns 5xx on `/api/research`, falls back to a
-direct AskNews call and spools the fetched documents to an outbox for later
-replay into IW (`betomcat replay-outbox`), so the as-of discipline holds
-even in degraded mode (BUILD_LOG decision 3). If IW is merely slow, the
-caller's own timeout governs -- there is no thin-briefing shortcut here.
+direct blend of one AskNews latest-news search (when the monthly AskNews
+budget allows it) and Google News headlines (free), and spools the fetched
+documents to an outbox for later replay into IW (`betomcat replay-outbox`),
+so the as-of discipline holds even in degraded mode (BUILD_LOG decision 3).
+If IW is merely slow, the caller's own timeout governs -- there is no
+thin-briefing shortcut here.
 
 `/api/families/classify` fails open to "no family" on any error, with a
 60s timeout.
@@ -15,7 +17,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,8 +30,11 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 ASKNEWS_SEARCH_URL = "https://api.asknews.app/v1/news/search"
+GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search"
+GOOGLE_NEWS_USER_AGENT = "Mozilla/5.0"
+GOOGLE_NEWS_MAX_ITEMS = 20
 FAMILY_CLASSIFY_TIMEOUT = 60.0
-DIRECT_ASKNEWS_TIMEOUT = 30.0
+DIRECT_FALLBACK_TIMEOUT = 30.0
 
 
 def _now_iso() -> str:
@@ -88,6 +95,8 @@ class ResearchResult(BaseModel):
     degraded: bool = False
     degraded_reason: str | None = None
     gate_log: list[dict[str, Any]] = Field(default_factory=list)
+    # AskNews calls this client itself made (the degraded fallback only).
+    asknews_calls: int = 0
 
 
 def render_briefing_text(briefing: dict[str, Any] | None) -> str:
@@ -161,6 +170,70 @@ def render_history_text(history: list[HistoryItem]) -> str:
     return "\n".join(lines)
 
 
+def parse_google_news_rss(xml_text: str) -> list[str]:
+    """Parse a Google News RSS feed into `YYYY-MM-DD | source | headline` lines.
+
+    Takes the first `GOOGLE_NEWS_MAX_ITEMS` items (Google's relevance order),
+    strips the ` - <source>` suffix Google appends to each title, and returns
+    them newest first; items without a parseable date sort last.
+
+    Args:
+        xml_text: The RSS response body.
+
+    Returns:
+        The formatted lines, possibly empty.
+
+    Raises:
+        xml.etree.ElementTree.ParseError: If `xml_text` is not valid XML.
+    """
+    items = ET.fromstring(xml_text).findall("./channel/item")
+    dated: list[tuple[datetime | None, str]] = []
+    for item in items[:GOOGLE_NEWS_MAX_ITEMS]:
+        headline = (item.findtext("title") or "").strip()
+        source = (item.findtext("source") or "").strip()
+        if not source:
+            headline, _, source = headline.rpartition(" - ")
+            source = source or "unknown source"
+        elif headline.endswith(f" - {source}"):
+            headline = headline[: -len(f" - {source}")]
+        if not headline:
+            continue
+        try:
+            published: datetime | None = parsedate_to_datetime(
+                item.findtext("pubDate") or ""
+            ).astimezone(UTC)
+        except (TypeError, ValueError):
+            published = None
+        date_display = published.strftime("%Y-%m-%d") if published else "unknown date"
+        dated.append((published, f"{date_display} | {source} | {headline}"))
+    dated.sort(
+        key=lambda pair: pair[0] or datetime.min.replace(tzinfo=UTC), reverse=True
+    )
+    return [line for _, line in dated]
+
+
+def _outbox_line(
+    *,
+    url: str,
+    title: str,
+    provider: str,
+    published: str | None,
+    fetched_at: str,
+    content: str,
+) -> bytes:
+    return orjson.dumps(
+        {
+            "url": url,
+            "title": title,
+            "provider": provider,
+            "published": published,
+            "fetched_at": fetched_at,
+            "content": content,
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+    )
+
+
 class IWClient:
     """Async client for the Intelligence Workbench HTTP API."""
 
@@ -185,7 +258,7 @@ class IWClient:
         """`POST /api/documents`: ingest raw documents without extraction.
 
         Used by `betomcat replay-outbox` to replay degraded-mode fetches
-        (spooled by `_direct_asknews`) back into IW once it is reachable
+        (spooled by `_direct_fallback`) back into IW once it is reachable
         again. Only the fields IW's contract documents are sent; local
         bookkeeping fields (e.g. `content_hash`) are dropped -- IW computes
         its own ids and hashes.
@@ -241,11 +314,12 @@ class IWClient:
         family_id: str | None,
         timeout: float,
         providers: list[str] | None = None,
+        asknews_allowed: bool = True,
         news_since: str | None = None,
         max_news: int = 12,
         max_wiki: int = 3,
     ) -> ResearchResult:
-        """`POST /api/research`, falling back to direct AskNews when IW is down.
+        """`POST /api/research`, falling back to a direct blend when IW is down.
 
         Args:
             question: Question title.
@@ -255,13 +329,16 @@ class IWClient:
             timeout: Request timeout in seconds (bounded by the caller's hard
                 deadline; if IW is merely slow, this is where that time goes).
             providers: Override research providers.
+            asknews_allowed: Whether the degraded fallback may call AskNews
+                (the caller's monthly budget verdict). It does not alter what
+                IW is asked; `providers` does that.
             news_since: Explicit gap-fill floor; normally left `None` so IW
                 resolves it server-side from the family's `last_seen`.
             max_news: Max news documents to fetch.
             max_wiki: Max wiki documents to fetch.
 
         Returns:
-            The dossier's research result, or a degraded direct-AskNews
+            The dossier's research result, or a degraded direct-fallback
             result if IW was unreachable or errored server-side.
         """
         body: dict[str, Any] = {
@@ -281,15 +358,15 @@ class IWClient:
                 f"{self._base_url}/api/research", json=body, timeout=timeout
             )
         except httpx.ConnectError as exc:
-            logger.warning("IW unreachable, falling back to direct AskNews: %s", exc)
-            return await self._direct_asknews(question)
+            logger.warning("IW unreachable, using the direct fallback: %s", exc)
+            return await self._direct_fallback(question, asknews_allowed)
 
         if response.status_code >= 500:
             logger.warning(
-                "IW research returned %s, falling back to direct AskNews",
+                "IW research returned %s, using the direct fallback",
                 response.status_code,
             )
-            return await self._direct_asknews(question)
+            return await self._direct_fallback(question, asknews_allowed)
         response.raise_for_status()
         return self._parse_research_response(response.json())
 
@@ -307,47 +384,85 @@ class IWClient:
             gate_log=data.get("gate_log", []),
         )
 
-    async def _direct_asknews(self, question: str) -> ResearchResult:
-        """Degraded-mode research: direct AskNews, with outbox spooling."""
+    async def _direct_fallback(
+        self, question: str, asknews_allowed: bool
+    ) -> ResearchResult:
+        """Degraded-mode research: AskNews (if allowed) plus Google News.
+
+        Each half fails independently; the briefing carries whichever halves
+        came back, and every fetched document is spooled to the outbox.
+        """
         as_of = _now_iso()
-        if not self._asknews_api_key:
-            logger.warning("no AskNews key configured, proceeding question-only")
-            return ResearchResult(
-                as_of=as_of,
-                briefing_text=f"No research available for: {question}",
-                degraded=True,
-                degraded_reason="no_research",
-            )
+        fetched_at = _now_iso()
+        sections: list[str] = []
+        outbox_lines: list[bytes] = []
+        asknews_calls = 0
+
+        if not asknews_allowed:
+            logger.info("AskNews over budget, direct fallback skips it")
+        elif not self._asknews_api_key:
+            logger.warning("no AskNews key configured, direct fallback skips it")
+        else:
+            asknews_calls = 1
+            try:
+                rendered, lines = await self._asknews_latest(question, fetched_at)
+            except Exception as exc:
+                logger.warning("direct AskNews fallback failed: %s", type(exc).__name__)
+            else:
+                if rendered:
+                    sections.append("AskNews latest news:\n" + "\n".join(rendered))
+                    outbox_lines.extend(lines)
 
         try:
-            response = await self._client.get(
-                ASKNEWS_SEARCH_URL,
-                headers={"Authorization": f"Bearer {self._asknews_api_key}"},
-                params={
-                    "query": question,
-                    "n_articles": 10,
-                    "return_type": "dicts",
-                    "method": "nl",
-                    "hours_back": 720,
-                },
-                timeout=DIRECT_ASKNEWS_TIMEOUT,
-            )
-            response.raise_for_status()
-            payload = response.json()
+            headlines, lines = await self._google_news(question, fetched_at)
         except Exception as exc:
-            logger.warning("direct AskNews fallback also failed: %s", exc)
+            logger.warning("Google News fallback failed: %s", type(exc).__name__)
+        else:
+            if headlines:
+                sections.append("Google News headlines:\n" + "\n".join(headlines))
+                outbox_lines.extend(lines)
+
+        if not sections:
             return ResearchResult(
                 as_of=as_of,
                 briefing_text=f"No research available for: {question}",
                 degraded=True,
                 degraded_reason="no_research",
+                asknews_calls=asknews_calls,
             )
 
-        articles = payload.get("as_dicts") or []
-        fetched_at = _now_iso()
-        rendered_articles = []
+        self._write_outbox(outbox_lines)
+        return ResearchResult(
+            as_of=as_of,
+            briefing_text=(
+                "(degraded mode: direct news search fallback, IW unavailable)\n\n"
+                + "\n\n".join(sections)
+            ),
+            degraded=True,
+            degraded_reason="iw_unavailable",
+            asknews_calls=asknews_calls,
+        )
+
+    async def _asknews_latest(
+        self, question: str, fetched_at: str
+    ) -> tuple[list[str], list[bytes]]:
+        """One AskNews latest-news search (1 call; `hours_back` would bill 5)."""
+        response = await self._client.get(
+            ASKNEWS_SEARCH_URL,
+            headers={"Authorization": f"Bearer {self._asknews_api_key}"},
+            params={
+                "query": question,
+                "strategy": "latest news",
+                "n_articles": 10,
+                "return_type": "dicts",
+                "method": "nl",
+            },
+            timeout=DIRECT_FALLBACK_TIMEOUT,
+        )
+        response.raise_for_status()
+        rendered: list[str] = []
         outbox_lines: list[bytes] = []
-        for article in articles:
+        for article in response.json().get("as_dicts") or []:
             title = article.get("eng_title") or article.get("title") or "(untitled)"
             url = article.get("article_url") or article.get("url") or ""
             published = article.get("pub_date") or article.get("published")
@@ -357,41 +472,55 @@ class IWClient:
                 or article.get("content")
                 or ""
             )
-            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             published_display = published or "unknown date"
-            rendered_articles.append(
+            rendered.append(
                 f"- **{title}** ({published_display}): {content[:500]} [{url}]"
             )
             outbox_lines.append(
-                orjson.dumps(
-                    {
-                        "url": url,
-                        "title": title,
-                        "provider": "asknews_news",
-                        "published": published,
-                        "fetched_at": fetched_at,
-                        "content": content,
-                        "content_hash": content_hash,
-                    }
+                _outbox_line(
+                    url=url,
+                    title=title,
+                    provider="asknews_news",
+                    published=published,
+                    fetched_at=fetched_at,
+                    content=content,
                 )
             )
+        return rendered, outbox_lines
 
-        self._write_outbox(outbox_lines)
-
-        briefing_text = (
-            "(degraded mode: direct AskNews fallback, IW unavailable)\n\n"
-            + (
-                "\n".join(rendered_articles)
-                if rendered_articles
-                else "(no articles found)"
+    async def _google_news(
+        self, question: str, fetched_at: str
+    ) -> tuple[list[str], list[bytes]]:
+        """Google News RSS headlines for `question` (free, last 30 days)."""
+        url = httpx.URL(
+            GOOGLE_NEWS_RSS_URL,
+            params={
+                "q": f"{question} when:30d",
+                "hl": "en-US",
+                "gl": "US",
+                "ceid": "US:en",
+            },
+        )
+        response = await self._client.get(
+            url,
+            headers={"User-Agent": GOOGLE_NEWS_USER_AGENT},
+            timeout=DIRECT_FALLBACK_TIMEOUT,
+        )
+        response.raise_for_status()
+        headlines = parse_google_news_rss(response.text)
+        if not headlines:
+            return [], []
+        content = "\n".join(headlines)
+        return headlines, [
+            _outbox_line(
+                url=str(url),
+                title=f"Google News headlines: {question}",
+                provider="google_news",
+                published=None,
+                fetched_at=fetched_at,
+                content=content,
             )
-        )
-        return ResearchResult(
-            as_of=as_of,
-            briefing_text=briefing_text,
-            degraded=True,
-            degraded_reason="iw_unavailable",
-        )
+        ]
 
     def _write_outbox(self, lines: list[bytes]) -> None:
         if not lines:

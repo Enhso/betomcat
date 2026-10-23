@@ -11,23 +11,31 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+import re
+import sqlite3
+from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import orjson
 import pytest
 import yaml
 from forecasting_tools.data_models.questions import BinaryQuestion
+from pytest_httpx import HTTPXMock
 
 from betomcat.budget import PacingResult
 from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, LLMResult
-from betomcat.pipeline import PipelineDeps, run_pipeline
+from betomcat.pipeline import (
+    PipelineDeps,
+    PipelineOutcome,
+    asknews_cycle_start,
+    run_pipeline,
+)
 from betomcat.pool import DrawResult, ModelSpec, write_weights
 from betomcat.rationale import RATIONALE_MODEL
-from betomcat.research import FamilyClassification, ResearchResult
+from betomcat.research import FamilyClassification, IWClient, ResearchResult
 
 POOL_MODELS = ["model-a", "model-b"]
 
@@ -895,3 +903,304 @@ async def test_provisional_at_hard_synthesis_failure_posts_fallback(
     assert comments[0].startswith(
         "betomcat v1.0.0, provisional forecast\n- **model-a**"
     )
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(
+            datetime(2026, 10, 15, 9, 30, tzinfo=UTC),
+            datetime(2026, 9, 22, tzinfo=UTC),
+            id="before-the-22nd-is-the-previous-months-22nd",
+        ),
+        pytest.param(
+            datetime(2026, 10, 21, 23, 59, 59, tzinfo=UTC),
+            datetime(2026, 9, 22, tzinfo=UTC),
+            id="last-second-before-the-cycle",
+        ),
+        pytest.param(
+            datetime(2026, 10, 22, 0, 0, 0, tzinfo=UTC),
+            datetime(2026, 10, 22, tzinfo=UTC),
+            id="the-22nd-at-midnight-maps-to-itself",
+        ),
+        pytest.param(
+            datetime(2026, 10, 31, 18, 45, tzinfo=UTC),
+            datetime(2026, 10, 22, tzinfo=UTC),
+            id="after-the-22nd-is-this-months-22nd",
+        ),
+        pytest.param(
+            datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC),
+            datetime(2026, 12, 22, tzinfo=UTC),
+            id="end-of-december",
+        ),
+        pytest.param(
+            datetime(2027, 1, 15, 12, 0, tzinfo=UTC),
+            datetime(2026, 12, 22, tzinfo=UTC),
+            id="15-january-is-22-december-of-the-previous-year",
+        ),
+        pytest.param(
+            datetime(2027, 1, 22, 0, 0, tzinfo=UTC),
+            datetime(2027, 1, 22, tzinfo=UTC),
+            id="22-january-maps-to-itself",
+        ),
+        pytest.param(
+            datetime(2026, 10, 22, 1, 0, tzinfo=timezone(timedelta(hours=2))),
+            datetime(2026, 9, 22, tzinfo=UTC),
+            id="offset-time-is-read-in-utc",
+        ),
+    ],
+)
+def test_asknews_cycle_start(now: datetime, expected: datetime) -> None:
+    assert asknews_cycle_start(now) == expected
+
+
+CYCLE_START = "2026-10-22T00:00:00Z"
+IW_URL = "http://iw.test"
+ASKNEWS_REQUEST = re.compile(r"https://api\.asknews\.app/.*")
+GOOGLE_REQUEST = re.compile(r"https://news\.google\.com/rss/search.*")
+GOOGLE_FIXTURE = Path(__file__).parent / "fixtures" / "google_news_rss.xml"
+IW_RESEARCH_BODY = {
+    "dossier_id": "dos:budget",
+    "as_of": "2026-10-23T12:00:00Z",
+    "briefing": {"situation_summary": "Calm markets."},
+    "claims": [],
+    "family_claims": [],
+    "history": [],
+    "gate_log": [],
+}
+
+
+@pytest.fixture
+def asknews_clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """A fake clock that the ledger also stamps its rows with.
+
+    The pipeline reads the cycle from `deps.clock` but the ledger stamps
+    `recorded_at` from its own clock, so both must agree for calls recorded
+    by one run to count against the next.
+    """
+    clock = FakeClock(datetime(2026, 10, 23, 12, 0, 0, tzinfo=UTC))
+    monkeypatch.setattr(
+        "betomcat.ledger._now_iso",
+        lambda: clock.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    return clock
+
+
+@pytest.fixture
+def budget_ledger(tmp_path: Path) -> Iterator[Ledger]:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    yield ledger
+    ledger.close()
+
+
+async def _says_65() -> LLMResult:
+    return await _ok("Probability: 65%")
+
+
+def _budget_deps(
+    tmp_path: Path, clock: FakeClock, ledger: Ledger, **overrides: object
+) -> PipelineDeps:
+    """Pipeline deps with the real IW client, so what IW is asked is on the wire."""
+    llm = ScriptedLLM({"model-a": _says_65, "model-b": _says_65})
+    deps = _deps(tmp_path, llm, clock, FakeMetaculus(), ledger)
+    return replace(deps, iw=IWClient(IW_URL, "ank_test", tmp_path), **overrides)
+
+
+def _seed_asknews_calls(
+    ledger: Ledger, monkeypatch: pytest.MonkeyPatch, calls: int, recorded_at: str
+) -> int:
+    """Record `calls` AskNews calls as of `recorded_at`; return the seeding run id."""
+    ledger.upsert_question("seed:1", "Seed?", "binary", None, None)
+    run = ledger.start_run("seed:1")
+    with monkeypatch.context() as patch:
+        patch.setattr("betomcat.ledger._now_iso", lambda: recorded_at)
+        ledger.record_asknews_calls(run.id, calls)
+    return run.id
+
+
+async def _run_question(
+    deps: PipelineDeps, clock: FakeClock, question_id: int
+) -> PipelineOutcome:
+    question = _question(clock.now + timedelta(seconds=40)).model_copy(
+        update={"id_of_question": question_id, "id_of_post": question_id}
+    )
+    return await run_pipeline(question, deps)
+
+
+def _mock_iw_up(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        url=f"{IW_URL}/api/families/classify",
+        json={"decision": "none", "method": "jev"},
+        is_reusable=True,
+    )
+    httpx_mock.add_response(
+        url=f"{IW_URL}/api/research", json=IW_RESEARCH_BODY, is_reusable=True
+    )
+
+
+def _mock_iw_research_down(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        url=f"{IW_URL}/api/families/classify",
+        json={"decision": "none", "method": "jev"},
+    )
+    httpx_mock.add_response(url=f"{IW_URL}/api/research", status_code=503)
+
+
+def _iw_research_bodies(httpx_mock: HTTPXMock) -> list[dict[str, object]]:
+    return [
+        orjson.loads(request.content)
+        for request in httpx_mock.get_requests(url=f"{IW_URL}/api/research")
+    ]
+
+
+def _asknews_rows(tmp_path: Path) -> list[tuple[int, int]]:
+    connection = sqlite3.connect(tmp_path / "ledger.sqlite")
+    try:
+        rows = connection.execute("SELECT run_id, calls FROM asknews_calls ORDER BY id")
+        return [(run_id, calls) for run_id, calls in rows]
+    finally:
+        connection.close()
+
+
+async def test_research_that_just_fits_the_cap_keeps_asknews_and_records_its_calls(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+    asknews_clock: FakeClock,
+    budget_ledger: Ledger,
+) -> None:
+    seed_run = _seed_asknews_calls(budget_ledger, monkeypatch, 748, CYCLE_START)
+    _mock_iw_up(httpx_mock)
+    deps = _budget_deps(tmp_path, asknews_clock, budget_ledger)
+
+    outcome = await _run_question(deps, asknews_clock, 201)
+
+    assert outcome.status == "submitted"
+    (body,) = _iw_research_bodies(httpx_mock)
+    assert body["question"] == "Will X happen?"
+    assert "providers" not in body
+    assert _asknews_rows(tmp_path) == [(seed_run, 748), (outcome.run_id, 2)]
+    assert budget_ledger.asknews_calls_since(CYCLE_START) == 750
+
+
+async def test_research_that_would_exceed_the_cap_asks_iw_for_free_providers_only(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+    asknews_clock: FakeClock,
+    budget_ledger: Ledger,
+) -> None:
+    seed_run = _seed_asknews_calls(budget_ledger, monkeypatch, 749, CYCLE_START)
+    _mock_iw_up(httpx_mock)
+    deps = _budget_deps(tmp_path, asknews_clock, budget_ledger)
+
+    outcome = await _run_question(deps, asknews_clock, 201)
+
+    assert outcome.status == "submitted"
+    (body,) = _iw_research_bodies(httpx_mock)
+    assert body["providers"] == ["google_news", "bing_news", "wikipedia"]
+    assert _asknews_rows(tmp_path) == [(seed_run, 749)]
+    assert budget_ledger.asknews_calls_since(CYCLE_START) == 749
+
+
+async def test_calls_are_recorded_per_run_until_the_cap_is_spent(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    asknews_clock: FakeClock,
+    budget_ledger: Ledger,
+) -> None:
+    _mock_iw_up(httpx_mock)
+    deps = _budget_deps(tmp_path, asknews_clock, budget_ledger, asknews_monthly_calls=4)
+
+    outcomes = [
+        await _run_question(deps, asknews_clock, qid) for qid in (201, 202, 203)
+    ]
+
+    assert [outcome.status for outcome in outcomes] == ["submitted"] * 3
+    assert _asknews_rows(tmp_path) == [
+        (outcomes[0].run_id, 2),
+        (outcomes[1].run_id, 2),
+    ]
+    assert ["providers" in body for body in _iw_research_bodies(httpx_mock)] == [
+        False,
+        False,
+        True,
+    ]
+    assert _iw_research_bodies(httpx_mock)[2]["providers"] == [
+        "google_news",
+        "bing_news",
+        "wikipedia",
+    ]
+    assert budget_ledger.asknews_calls_since(CYCLE_START) == 4
+
+
+async def test_calls_from_before_the_cycle_start_do_not_count(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+    asknews_clock: FakeClock,
+    budget_ledger: Ledger,
+) -> None:
+    asknews_clock.now = datetime(2026, 10, 22, 0, 0, 0, tzinfo=UTC)
+    seed_run = _seed_asknews_calls(
+        budget_ledger, monkeypatch, 750, "2026-10-21T23:59:59Z"
+    )
+    _mock_iw_up(httpx_mock)
+    deps = _budget_deps(tmp_path, asknews_clock, budget_ledger)
+
+    outcome = await _run_question(deps, asknews_clock, 201)
+
+    (body,) = _iw_research_bodies(httpx_mock)
+    assert "providers" not in body
+    assert _asknews_rows(tmp_path) == [(seed_run, 750), (outcome.run_id, 2)]
+    assert budget_ledger.asknews_calls_since(CYCLE_START) == 2
+
+
+async def test_over_budget_with_iw_down_the_fallback_makes_no_asknews_request(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+    asknews_clock: FakeClock,
+    budget_ledger: Ledger,
+) -> None:
+    seed_run = _seed_asknews_calls(budget_ledger, monkeypatch, 749, CYCLE_START)
+    _mock_iw_research_down(httpx_mock)
+    httpx_mock.add_response(
+        url=GOOGLE_REQUEST, text=GOOGLE_FIXTURE.read_text(encoding="utf-8")
+    )
+    deps = _budget_deps(tmp_path, asknews_clock, budget_ledger)
+
+    outcome = await _run_question(deps, asknews_clock, 201)
+
+    assert outcome.status == "submitted"
+    assert httpx_mock.get_requests(url=ASKNEWS_REQUEST) == []
+    assert len(httpx_mock.get_requests(url=GOOGLE_REQUEST)) == 1
+    run = budget_ledger.get_run(outcome.run_id)
+    assert run is not None
+    assert run["degraded"] == 1
+    assert _asknews_rows(tmp_path) == [(seed_run, 749)]
+
+
+async def test_under_budget_with_iw_down_the_fallback_call_is_recorded_too(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    asknews_clock: FakeClock,
+    budget_ledger: Ledger,
+) -> None:
+    _mock_iw_research_down(httpx_mock)
+    httpx_mock.add_response(
+        url=ASKNEWS_REQUEST,
+        json={"as_dicts": [{"eng_title": "ECB signals caution"}]},
+    )
+    httpx_mock.add_response(
+        url=GOOGLE_REQUEST, text=GOOGLE_FIXTURE.read_text(encoding="utf-8")
+    )
+    deps = _budget_deps(tmp_path, asknews_clock, budget_ledger)
+
+    outcome = await _run_question(deps, asknews_clock, 201)
+
+    assert outcome.status == "submitted"
+    assert len(httpx_mock.get_requests(url=ASKNEWS_REQUEST)) == 1
+    # IW's planned 2 calls plus the 1 the fallback made: over-counting is the
+    # documented safe side when IW fails.
+    assert _asknews_rows(tmp_path) == [(outcome.run_id, 3)]

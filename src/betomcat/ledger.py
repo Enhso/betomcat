@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS round_starts (
     limit_remaining REAL NOT NULL,
     recorded_at TIMESTAMP NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS asknews_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    calls INTEGER NOT NULL,
+    recorded_at TIMESTAMP NOT NULL
+);
 """
 
 
@@ -350,6 +357,24 @@ class Ledger:
             (round_start,),
         ).fetchone()
         return None if row is None else float(row[0])
+
+    # -- asknews quota ------------------------------------------------------
+
+    def record_asknews_calls(self, run_id: int, calls: int) -> None:
+        """Record AskNews calls spent for `run_id` (the pipeline's monthly guard)."""
+        self._conn.execute(
+            "INSERT INTO asknews_calls (run_id, calls, recorded_at) VALUES (?, ?, ?)",
+            (run_id, calls, _now_iso()),
+        )
+        self._conn.commit()
+
+    def asknews_calls_since(self, start: str) -> int:
+        """Total AskNews calls recorded at or after `start` (ISO 8601 UTC text)."""
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(calls), 0) FROM asknews_calls WHERE recorded_at >= ?",
+            (start,),
+        ).fetchone()
+        return int(row[0])
 
     # -- model forecasts ---------------------------------------------------
 
