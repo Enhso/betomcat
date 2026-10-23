@@ -182,6 +182,35 @@ async def test_research_happy_path(httpx_mock: HTTPXMock, tmp_path: Path) -> Non
     assert "Calm markets." in result.briefing_text
 
 
+async def test_research_sends_extra_queries_only_when_given(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    httpx_mock.add_response(
+        url=f"{IW_URL}/api/research",
+        json={"dossier_id": "dos:abc", "briefing": {}},
+        is_reusable=True,
+    )
+    client = _client(tmp_path)
+    kwargs = {
+        "question": "Will the ECB cut rates?",
+        "question_id": "metaculus:1",
+        "context": None,
+        "family_id": None,
+        "timeout": 30,
+    }
+
+    await client.research(**kwargs)
+    await client.research(**kwargs, extra_queries=[])
+    await client.research(**kwargs, extra_queries=["ECB March meeting", "euro CPI"])
+
+    bodies = [
+        orjson.loads(request.content)
+        for request in httpx_mock.get_requests(url=f"{IW_URL}/api/research")
+    ]
+    assert ["extra_queries" in body for body in bodies] == [False, False, True]
+    assert bodies[2]["extra_queries"] == ["ECB March meeting", "euro CPI"]
+
+
 async def test_research_falls_back_to_asknews_on_connect_error(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/research":

@@ -318,6 +318,7 @@ class IWClient:
         news_since: str | None = None,
         max_news: int = 12,
         max_wiki: int = 3,
+        extra_queries: list[str] | None = None,
     ) -> ResearchResult:
         """`POST /api/research`, falling back to a direct blend when IW is down.
 
@@ -336,6 +337,10 @@ class IWClient:
                 resolves it server-side from the family's `last_seen`.
             max_news: Max news documents to fetch.
             max_wiki: Max wiki documents to fetch.
+            extra_queries: Targeted search queries for IW to run on top of its
+                defaults (the referee's re-research); IW accepts at most 3,
+                each non-empty and at most 200 characters. Left out of the
+                request when empty. The degraded fallback ignores them.
 
         Returns:
             The dossier's research result, or a degraded direct-fallback
@@ -352,6 +357,8 @@ class IWClient:
         }
         if providers is not None:
             body["providers"] = providers
+        if extra_queries:
+            body["extra_queries"] = extra_queries
 
         try:
             response = await self._client.post(

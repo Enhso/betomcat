@@ -264,6 +264,73 @@ def test_mark_comment_posted_flips_only_the_matching_submission(
         ledger.close()
 
 
+def test_mark_comment_posted_flips_only_the_latest_matching_row(
+    tmp_path: Path,
+) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        ledger.record_submission(run.id, "provisional", 0.65, comment_posted=False)
+        ledger.record_submission(run.id, "provisional", 0.525, comment_posted=False)
+
+        ledger.mark_comment_posted(run.id, "provisional")
+
+        submissions = ledger.get_submissions(run.id)
+        assert [s["forecast_json"] for s in submissions] == ["0.65", "0.525"]
+        assert [s["comment_posted"] for s in submissions] == [0, 1]
+    finally:
+        ledger.close()
+
+
+def test_record_referee_stores_one_row_per_run(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        other_run = ledger.start_run("metaculus:1")
+        assert ledger.get_referee(run.id) is None
+
+        ledger.record_referee(run.id, "stale_or_missing_information", True, "rerun_ok")
+        ledger.record_referee(other_run.id, None, False, "jev_failed")
+
+        row = ledger.get_referee(run.id)
+        assert row is not None
+        assert {k: row[k] for k in row if k != "recorded_at"} == {
+            "run_id": run.id,
+            "disagreement_class": "stale_or_missing_information",
+            "rerun": 1,
+            "outcome": "rerun_ok",
+        }
+        assert row["recorded_at"].endswith("Z")
+        other = ledger.get_referee(other_run.id)
+        assert other is not None
+        assert (other["disagreement_class"], other["rerun"], other["outcome"]) == (
+            None,
+            0,
+            "jev_failed",
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            ledger.record_referee(run.id, "other", False, "not_triggered")
+    finally:
+        ledger.close()
+
+
+def test_referee_table_is_added_to_an_existing_ledger(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.sqlite"
+    Ledger(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE referee_decisions")
+    conn.commit()
+    conn.close()
+
+    with Ledger(path) as ledger:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        ledger.record_referee(run.id, "other", False, "not_triggered")
+        assert ledger.get_referee(run.id) is not None
+
+
 def test_ledger_migrates_submissions_table_missing_report_column(
     tmp_path: Path,
 ) -> None:

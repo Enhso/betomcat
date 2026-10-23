@@ -134,6 +134,17 @@ CREATE TABLE IF NOT EXISTS model_scores (
 """
 
 
+REFEREE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS referee_decisions (
+    run_id INTEGER PRIMARY KEY REFERENCES runs(id),
+    disagreement_class TEXT,
+    rerun INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL,
+    recorded_at TIMESTAMP NOT NULL
+);
+"""
+
+
 @dataclass(frozen=True)
 class RunHandle:
     """A started run, returned so callers can finish/annotate it."""
@@ -153,6 +164,7 @@ class Ledger:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
         self._conn.executescript(WEIGHTS_SCHEMA)
+        self._conn.executescript(REFEREE_SCHEMA)
         self._migrate_submissions_report_column()
         self._conn.commit()
 
@@ -400,6 +412,41 @@ class Ledger:
         ).fetchone()
         return int(row[0])
 
+    # -- referee ---------------------------------------------------------------
+
+    def record_referee(
+        self,
+        run_id: int,
+        disagreement_class: str | None,
+        rerun: bool,
+        outcome: str,
+    ) -> None:
+        """Record what the referee gate did on `run_id`: one row per run.
+
+        Args:
+            run_id: The run whose two forecasts diverged.
+            disagreement_class: Jev's class, or `None` when Jev gave none.
+            rerun: Whether a second round of research and forecasts was started.
+            outcome: How it ended, e.g. `rerun_ok`, `rerun_failed`, `abandoned`,
+                `not_triggered`, `budget`, `late`, `jev_failed`.
+        """
+        self._conn.execute(
+            """
+            INSERT INTO referee_decisions
+                (run_id, disagreement_class, rerun, outcome, recorded_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (run_id, disagreement_class, int(rerun), outcome, _now_iso()),
+        )
+        self._conn.commit()
+
+    def get_referee(self, run_id: int) -> dict[str, Any] | None:
+        """The `referee_decisions` row for `run_id`, or `None` if the gate never ran."""
+        row = self._conn.execute(
+            "SELECT * FROM referee_decisions WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
     # -- model forecasts ---------------------------------------------------
 
     def record_model_forecast(
@@ -628,13 +675,20 @@ class Ledger:
         self._conn.commit()
 
     def mark_comment_posted(self, run_id: int, kind: str) -> None:
-        """Flip `comment_posted` to true for the (`run_id`, `kind`) submission.
+        """Flip `comment_posted` to true for the latest (`run_id`, `kind`) submission.
 
         Used when a `provisional` submission's comment, withheld at post
         time, is posted later because hard arrived with it still standing.
+        Only the latest row flips: a run can hold several provisionals (one per
+        model-set that stood alone), but the one comment belongs to the last.
         """
         self._conn.execute(
-            "UPDATE submissions SET comment_posted = 1 WHERE run_id = ? AND kind = ?",
+            """
+            UPDATE submissions SET comment_posted = 1
+            WHERE id = (
+                SELECT MAX(id) FROM submissions WHERE run_id = ? AND kind = ?
+            )
+            """,
             (run_id, kind),
         )
         self._conn.commit()

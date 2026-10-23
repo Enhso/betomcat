@@ -33,6 +33,7 @@ from betomcat.ledger import Ledger
 from betomcat.llm import OpenRouterClient
 from betomcat.metaculus import MetaculusWrapper
 from betomcat.pipeline import PipelineDeps, run_pipeline
+from betomcat.referee import jev_client_from_env
 from betomcat.research import IWClient
 from betomcat.weights import update_weights
 
@@ -72,6 +73,7 @@ def build_deps(settings: Settings, dry_run: bool) -> PipelineDeps:
         hard_threshold=timedelta(minutes=settings.hard_threshold_min),
         budget=budget,
         asknews_monthly_calls=settings.asknews_monthly_calls,
+        jev=jev_client_from_env(),
     )
 
 

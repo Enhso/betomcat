@@ -10,6 +10,7 @@ running model-attempt tasks make progress against the same virtual time.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import re
 import sqlite3
@@ -25,16 +26,20 @@ from forecasting_tools.data_models.questions import BinaryQuestion
 from pytest_httpx import HTTPXMock
 
 from betomcat.budget import PacingResult
+from betomcat.forecast import ModelResult
 from betomcat.ledger import Ledger
 from betomcat.llm import LLMError, LLMResult
 from betomcat.pipeline import (
+    FREE_NEWS_PROVIDERS,
     PipelineDeps,
     PipelineOutcome,
+    _diverged,
     asknews_cycle_start,
     run_pipeline,
 )
 from betomcat.pool import DrawResult, ModelSpec, write_weights
 from betomcat.rationale import RATIONALE_MODEL
+from betomcat.referee import JEV_URL, REFEREE_MODEL, JevClient
 from betomcat.research import FamilyClassification, IWClient, ResearchResult
 
 POOL_MODELS = ["model-a", "model-b"]
@@ -75,21 +80,33 @@ class ScriptedLLM:
     Rationale-synthesis calls (`RATIONALE_MODEL`) are kept apart from the
     forecast calls: they go to `rationale` (default: fail, so the fallback
     comment is posted) and are logged in `rationale_calls` as `(prompt,
-    timeout)`, never in `calls`.
+    timeout)`, never in `calls`. The referee's query writer (`REFEREE_MODEL`,
+    the same Luna id) goes to `referee` (default: fail) and its prompts land in
+    `referee_prompts`. Forecast prompts are kept in `prompts` as `(model id,
+    prompt)`, in call order.
     """
 
     scripts: dict[str, object]
     rationale: Callable[[], Awaitable[LLMResult]] | None = None
     calls: list[str] = field(default_factory=list)
     rationale_calls: list[tuple[str, float]] = field(default_factory=list)
+    referee: Callable[[], Awaitable[LLMResult]] | None = None
+    referee_prompts: list[str] = field(default_factory=list)
+    prompts: list[tuple[str, str]] = field(default_factory=list)
 
     async def complete(self, model: object, prompt: str, timeout: float) -> LLMResult:
+        if model == REFEREE_MODEL:
+            self.referee_prompts.append(prompt)
+            if self.referee is None:
+                raise LLMError("no referee script")
+            return await self.referee()
         if model.id == RATIONALE_MODEL.id:  # type: ignore[attr-defined]
             self.rationale_calls.append((prompt, timeout))
             if self.rationale is None:
                 raise LLMError("no rationale script")
             return await self.rationale()
         self.calls.append(model.id)  # type: ignore[attr-defined]
+        self.prompts.append((model.id, prompt))  # type: ignore[attr-defined]
         return await self.scripts[model.id]()  # type: ignore[operator]
 
 
@@ -1204,3 +1221,869 @@ async def test_under_budget_with_iw_down_the_fallback_call_is_recorded_too(
     # IW's planned 2 calls plus the 1 the fallback made: over-counting is the
     # documented safe side when IW fails.
     assert _asknews_rows(tmp_path) == [(outcome.run_id, 3)]
+
+
+# -- the referee gate (HANDOFF s5.1) ---------------------------------------------
+
+NOW = datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC)
+HANG = object()
+FIRST_A = "MARKER-A1 The vote slipped.\nSummary: A first.\nProbability: 65%"
+FIRST_B = "MARKER-B1 A base rate applies.\nSummary: B first.\nProbability: 40%"
+SECOND_A = "Second look A.\nSummary: A second.\nProbability: 60%"
+SECOND_B = "Second look B.\nSummary: B second.\nProbability: 50%"
+# model-a weighs 3, model-b 1: (0.65 * 3 + 0.40) / 4 and (0.60 * 3 + 0.50) / 4.
+FIRST_AVERAGE = 0.5875
+SECOND_AVERAGE = 0.575
+NO_LEAK = ("MARKER-A1", "MARKER-B1", "A first", "B first", "vote slipped")
+
+
+def _replies(*items: object) -> Callable[[], Awaitable[LLMResult]]:
+    """A model script that answers its calls in order.
+
+    Each item is text, an error, `HANG`, or `(event, text)` to answer once the
+    event is set.
+    """
+    remaining = list(items)
+
+    async def script() -> LLMResult:
+        item = remaining.pop(0)
+        if item is HANG:
+            await asyncio.Event().wait()
+        if isinstance(item, tuple):
+            event, item = item
+            await event.wait()
+        if isinstance(item, Exception):
+            raise item
+        return await _ok(str(item))
+
+    return script
+
+
+def _luna(diagnosis: str, queries: list[str]) -> Callable[[], Awaitable[LLMResult]]:
+    async def script() -> LLMResult:
+        return await _ok(
+            orjson.dumps({"diagnosis": diagnosis, "queries": queries}).decode()
+        )
+
+    return script
+
+
+def _jev_answer(choice: str) -> dict[str, object]:
+    return {"answers": {"disagreement": {"choice": choice, "confidence": 0.9}}}
+
+
+def _iw_body(summary: str, dossier: str) -> dict[str, object]:
+    return {
+        "dossier_id": dossier,
+        "as_of": "2026-09-22T12:00:00Z",
+        "briefing": {"situation_summary": summary},
+        "claims": [],
+        "family_claims": [],
+        "history": [],
+        "gate_log": [],
+    }
+
+
+def _mock_iw(
+    httpx_mock: HTTPXMock, *second: tuple[int, dict[str, object]], first: bool = True
+) -> None:
+    """IW classify, the first research, and any further researches `second`."""
+    httpx_mock.add_response(
+        url=f"{IW_URL}/api/families/classify",
+        json={"decision": "none", "method": "jev"},
+        is_reusable=True,
+    )
+    if first:
+        httpx_mock.add_response(
+            url=f"{IW_URL}/api/research", json=_iw_body("FIRST-BRIEFING", "dos:1")
+        )
+    for status, body in second:
+        httpx_mock.add_response(
+            url=f"{IW_URL}/api/research", status_code=status, json=body
+        )
+
+
+SECOND_RESEARCH = (200, _iw_body("SECOND-BRIEFING", "dos:2"))
+
+
+def _mock_jev(httpx_mock: HTTPXMock, choice: str) -> None:
+    httpx_mock.add_response(url=JEV_URL, method="POST", json=_jev_answer(choice))
+
+
+def _referee_deps(
+    tmp_path: Path,
+    llm: ScriptedLLM,
+    clock: FakeClock,
+    metaculus: FakeMetaculus,
+    ledger: Ledger,
+    **overrides: object,
+) -> PipelineDeps:
+    write_weights(
+        tmp_path,
+        weights={"model-a": 3.0, "model-b": 1.0},
+        n_resolved={},
+        updated_at="2026-09-22T00:00:00Z",
+    )
+    deps = _deps(tmp_path, llm, clock, metaculus, ledger)
+    wiring: dict[str, object] = {
+        "iw": IWClient(IW_URL, None, tmp_path),
+        "jev": JevClient("jev_test_key"),
+    }
+    return replace(deps, **{**wiring, **overrides})
+
+
+async def _run_diverging(deps: PipelineDeps, clock: FakeClock) -> PipelineOutcome:
+    return await run_pipeline(_question(clock.now + timedelta(seconds=40)), deps)
+
+
+def _posted_binary(metaculus: FakeMetaculus) -> list[float]:
+    return [float(c[1]) for c in metaculus.calls if c[0] == "post_binary"]  # type: ignore[arg-type]
+
+
+def _submission_rows(
+    ledger: Ledger, run_id: int | None
+) -> list[tuple[str, int, float]]:
+    assert run_id is not None
+    return [
+        (s["kind"], s["comment_posted"], float(s["forecast_json"]))
+        for s in ledger.get_submissions(run_id)
+    ]
+
+
+def _referee_row(ledger: Ledger, run_id: int | None) -> tuple[object, ...]:
+    assert run_id is not None
+    row = ledger.get_referee(run_id)
+    assert row is not None
+    return (row["disagreement_class"], row["rerun"], row["outcome"])
+
+
+def _two_model_llm(
+    first_a: object = FIRST_A,
+    first_b: object = FIRST_B,
+    second_a: object = SECOND_A,
+    second_b: object = SECOND_B,
+    **kwargs: object,
+) -> ScriptedLLM:
+    return ScriptedLLM(
+        {
+            "model-a": _replies(first_a, second_a),
+            "model-b": _replies(first_b, second_b),
+        },
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+async def test_stale_information_reruns_both_models_and_the_final_is_their_average(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(
+        referee=_luna(
+            "The vote date moved.", ["vote date postponed", "  second   query "]
+        )
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        # The weighted average of the first round goes in as a provisional, the
+        # weighted average of the two re-forecasts (same frozen weights) as the final.
+        assert _posted_binary(metaculus) == pytest.approx(
+            [FIRST_AVERAGE, SECOND_AVERAGE]
+        )
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("provisional", 0, pytest.approx(FIRST_AVERAGE)),
+            ("final", 1, pytest.approx(SECOND_AVERAGE)),
+        ]
+        (comment,) = _comment_texts(metaculus)
+        header, *bullets = comment.split("\n")
+        assert header == "betomcat v1.0.0, final forecast"
+        assert sorted(bullets) == [
+            "- **model-a** (60.00%): A second.",
+            "- **model-b** (50.00%): B second.",
+        ]
+        assert _referee_row(ledger, outcome.run_id) == (
+            "stale_or_missing_information",
+            1,
+            "rerun_ok",
+        )
+
+        first_body, second_body = _iw_research_bodies(httpx_mock)
+        assert "extra_queries" not in first_body
+        assert second_body["extra_queries"] == ["vote date postponed", "second query"]
+        assert _asknews_rows(tmp_path) == [(outcome.run_id, 2), (outcome.run_id, 4)]
+
+        (jev_request,) = httpx_mock.get_requests(url=JEV_URL)
+        jev_body = orjson.loads(jev_request.content)
+        assert jev_request.headers["Authorization"] == "Bearer jev_test_key"
+        assert jev_body["state"]["question"] == "Will X happen?"
+        assert jev_body["state"]["resolution_criteria"] == "Resolves YES if X."
+        assert sorted(jev_body["state"]["rationales"]) == [FIRST_A, FIRST_B]
+
+        (luna_prompt,) = llm.referee_prompts
+        assert FIRST_A in luna_prompt and FIRST_B in luna_prompt
+        assert "stale or missing information" in luna_prompt
+        assert llm.rationale_calls[0][0].count("Forecast ") == 2
+
+        first_round, second_round = llm.prompts[:2], llm.prompts[2:]
+        assert sorted(model for model, _ in second_round) == ["model-a", "model-b"]
+        assert second_round[0][1] == second_round[1][1]
+        for _, prompt in first_round:
+            assert "FIRST-BRIEFING" in prompt and "Second round" not in prompt
+        for _, prompt in second_round:
+            assert "SECOND-BRIEFING" in prompt and "FIRST-BRIEFING" not in prompt
+            assert (
+                "Likely cause: The vote date moved." in prompt
+                and "### Second round" in prompt
+            )
+            # Never the other model's rationale (herding), nor even a model's own.
+            for leaked in NO_LEAK:
+                assert leaked not in prompt
+
+        rows = ledger.get_model_forecasts(outcome.run_id)
+        assert sorted((r["model_id"], r["attempt"], r["status"]) for r in rows) == [
+            ("model-a", -2, "ok"),
+            ("model-a", 1, "ok"),
+            ("model-b", -2, "ok"),
+            ("model-b", 1, "ok"),
+        ]
+        last = {
+            r["model_id"]: r["forecast_json"]
+            for r in ledger.last_ok_forecasts("metaculus:123")
+        }
+        assert last == {"model-a": "0.6", "model-b": "0.5"}
+        final_report = ledger.get_submissions(outcome.run_id)[1]["report"]
+        assert "## Disagreement\n- stale_or_missing_information" in final_report
+        assert "Second look A." in final_report and "MARKER-A1" not in final_report
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize(
+    ("label", "fixed_sentence"),
+    [
+        (
+            "stale_or_missing_information",
+            "The earlier research may have missed recent or relevant developments; "
+            "weigh the newly gathered evidence carefully.",
+        ),
+        (
+            "misread_resolution_criteria",
+            "The resolution criteria or fine print may have been misread; read them "
+            "literally, edge cases included, before forecasting.",
+        ),
+    ],
+)
+@pytest.mark.parametrize("luna_failure", ["error", "garbage"])
+async def test_a_failed_query_writer_reruns_with_the_fixed_diagnosis_and_no_queries(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    label: str,
+    fixed_sentence: str,
+    luna_failure: str,
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, label)
+
+    async def garbage() -> LLMResult:
+        return await _ok("I cannot help with that.")
+
+    async def down() -> LLMResult:
+        raise LLMError("luna is down")
+
+    llm = _two_model_llm(referee=down if luna_failure == "error" else garbage)
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert _posted_binary(metaculus) == pytest.approx(
+            [FIRST_AVERAGE, SECOND_AVERAGE]
+        )
+        assert _referee_row(ledger, outcome.run_id) == (label, 1, "rerun_ok")
+        assert len(_comment_texts(metaculus)) == 1
+        assert "extra_queries" not in _iw_research_bodies(httpx_mock)[1]
+        for _, prompt in llm.prompts[2:]:
+            assert f"Likely cause: {fixed_sentence}" in prompt
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize(
+    "label", ["different_base_rate", "genuine_uncertainty", "other"]
+)
+async def test_a_class_that_does_not_trigger_posts_the_first_average_as_the_final(
+    tmp_path: Path, httpx_mock: HTTPXMock, label: str
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock)
+    _mock_jev(httpx_mock, label)
+    llm = _two_model_llm(referee=_luna("unused", ["unused"]))
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert _posted_binary(metaculus) == pytest.approx(
+            [FIRST_AVERAGE, FIRST_AVERAGE]
+        )
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("provisional", 0, pytest.approx(FIRST_AVERAGE)),
+            ("final", 1, pytest.approx(FIRST_AVERAGE)),
+        ]
+        assert _referee_row(ledger, outcome.run_id) == (label, 0, "not_triggered")
+        assert len(_comment_texts(metaculus)) == 1
+        assert len(_iw_research_bodies(httpx_mock)) == 1
+        assert llm.referee_prompts == []
+        assert len(llm.prompts) == 2
+        final_report = ledger.get_submissions(outcome.run_id)[1]["report"]
+        assert f"## Disagreement\n- {label}" in final_report
+    finally:
+        ledger.close()
+
+
+async def test_jev_failure_leaves_the_first_average_and_posts_the_final_at_once(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock)
+    httpx_mock.add_response(
+        url=JEV_URL, status_code=500, headers={"retry-after": "0"}, is_reusable=True
+    )
+    llm = _two_model_llm(referee=_luna("unused", ["unused"]))
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert len(httpx_mock.get_requests(url=JEV_URL)) == 2
+        assert _posted_binary(metaculus) == pytest.approx(
+            [FIRST_AVERAGE, FIRST_AVERAGE]
+        )
+        assert _referee_row(ledger, outcome.run_id) == (None, 0, "jev_failed")
+        assert len(_comment_texts(metaculus)) == 1
+        assert llm.referee_prompts == [] and len(llm.prompts) == 2
+        final_report = ledger.get_submissions(outcome.run_id)[1]["report"]
+        assert "## Disagreement" not in final_report
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize("status", [422, 503], ids=["iw-rejects", "iw-down"])
+async def test_an_iw_failure_leaves_the_provisional_standing_with_its_comment_at_hard(
+    tmp_path: Path, httpx_mock: HTTPXMock, status: int
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, (status, {"detail": "no"}))
+    if status == 503:
+        httpx_mock.add_response(
+            url=GOOGLE_REQUEST, text=GOOGLE_FIXTURE.read_text(encoding="utf-8")
+        )
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(referee=_luna("The vote date moved.", ["vote date postponed"]))
+    metaculus = FakeMetaculus()
+    comment_times: list[datetime] = []
+    post_comment = metaculus.post_comment
+
+    async def timed_post_comment(question: object, text: str) -> None:
+        comment_times.append(clock.now)
+        await post_comment(question, text)
+
+    metaculus.post_comment = timed_post_comment  # type: ignore[method-assign]
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "provisional"
+        assert _posted_binary(metaculus) == pytest.approx([FIRST_AVERAGE])
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("provisional", 1, pytest.approx(FIRST_AVERAGE))
+        ]
+        (comment,) = _comment_texts(metaculus)
+        assert comment.startswith("betomcat v1.0.0, provisional forecast")
+        assert comment_times == [NOW + timedelta(seconds=35)]
+        assert _referee_row(ledger, outcome.run_id) == (
+            "stale_or_missing_information",
+            1,
+            "rerun_failed",
+        )
+        assert len(llm.prompts) == 2
+        assert len(_iw_research_bodies(httpx_mock)) == 2
+    finally:
+        ledger.close()
+
+
+async def test_a_missing_reforecast_leaves_the_first_average_standing(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, "misread_resolution_criteria")
+    llm = _two_model_llm(
+        second_b=LLMError("model-b is down"),
+        referee=_luna("Clause two was misread.", ["resolution source"]),
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "provisional"
+        # One re-forecast is never mixed with one first-round forecast.
+        assert _posted_binary(metaculus) == pytest.approx([FIRST_AVERAGE])
+        assert len(_comment_texts(metaculus)) == 1
+        assert _referee_row(ledger, outcome.run_id) == (
+            "misread_resolution_criteria",
+            1,
+            "rerun_failed",
+        )
+        rows = ledger.get_model_forecasts(outcome.run_id)
+        assert sorted((r["model_id"], r["attempt"], r["status"]) for r in rows) == [
+            ("model-a", -2, "discarded"),
+            ("model-a", 1, "ok"),
+            ("model-b", -2, "failed"),
+            ("model-b", 1, "ok"),
+        ]
+        # Weight scoring reads the last `ok` row: still the submitted first round.
+        last = {
+            r["model_id"]: r["forecast_json"]
+            for r in ledger.last_ok_forecasts("metaculus:123")
+        }
+        assert last == {"model-a": "0.65", "model-b": "0.4"}
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize("soft_seconds", [10, 5], ids=["soft-first", "soft-is-hard"])
+async def test_soft_or_hard_cutting_the_rerun_short_keeps_the_provisional(
+    tmp_path: Path, httpx_mock: HTTPXMock, soft_seconds: int
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(
+        second_a=HANG,
+        second_b=HANG,
+        referee=_luna("The vote date moved.", ["vote date postponed"]),
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(
+            tmp_path,
+            llm,
+            clock,
+            metaculus,
+            ledger,
+            soft_threshold=timedelta(seconds=soft_seconds),
+        )
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "provisional"
+        assert clock.now >= NOW + timedelta(seconds=35)
+        assert _posted_binary(metaculus) == pytest.approx([FIRST_AVERAGE])
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("provisional", 1, pytest.approx(FIRST_AVERAGE))
+        ]
+        (comment,) = _comment_texts(metaculus)
+        assert comment.startswith("betomcat v1.0.0, provisional forecast")
+        assert _referee_row(ledger, outcome.run_id) == (
+            "stale_or_missing_information",
+            1,
+            "abandoned",
+        )
+        assert len(llm.prompts) == 4
+    finally:
+        ledger.close()
+
+
+async def test_a_rerun_still_running_at_soft_is_abandoned(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    reforecasts_ready = clock.release_at(NOW + timedelta(seconds=32))  # soft is +30
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(
+        second_a=(reforecasts_ready, SECOND_A),
+        second_b=(reforecasts_ready, SECOND_B),
+        referee=_luna("The vote date moved.", ["vote date postponed"]),
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        # The re-forecasts would have landed before hard, but soft came first.
+        assert outcome.status == "provisional"
+        assert _posted_binary(metaculus) == pytest.approx([FIRST_AVERAGE])
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("provisional", 1, pytest.approx(FIRST_AVERAGE))
+        ]
+        assert len(_comment_texts(metaculus)) == 1
+        assert _referee_row(ledger, outcome.run_id) == (
+            "stale_or_missing_information",
+            1,
+            "abandoned",
+        )
+        assert len(llm.prompts) == 4
+        assert [r["attempt"] for r in ledger.get_model_forecasts(outcome.run_id)] == [
+            1,
+            1,
+        ]
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize("jev_status", [200, 500], ids=["classified", "jev-down"])
+async def test_a_divergence_found_after_soft_is_only_labelled(
+    tmp_path: Path, httpx_mock: HTTPXMock, jev_status: int
+) -> None:
+    clock = FakeClock(NOW)
+    release_b = clock.release_at(NOW + timedelta(seconds=31))
+    _mock_iw(httpx_mock)
+    if jev_status == 200:
+        # A class that would trigger a re-run before soft: after soft it is a label.
+        _mock_jev(httpx_mock, "stale_or_missing_information")
+    else:
+        httpx_mock.add_response(
+            url=JEV_URL, status_code=500, headers={"retry-after": "0"}, is_reusable=True
+        )
+
+    async def script_b() -> LLMResult:
+        await release_b.wait()
+        return await _ok(FIRST_B)
+
+    llm = ScriptedLLM(
+        {"model-a": _replies(FIRST_A), "model-b": script_b},
+        referee=_luna("unused", ["unused"]),
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        # model-a's lone provisional, then the final, which is the first average.
+        assert _posted_binary(metaculus) == pytest.approx([0.65, FIRST_AVERAGE])
+        assert [kind for kind, _, _ in _submission_rows(ledger, outcome.run_id)] == [
+            "provisional",
+            "final",
+        ]
+        assert len(_comment_texts(metaculus)) == 1
+        assert len(_iw_research_bodies(httpx_mock)) == 1
+        assert llm.referee_prompts == []
+        final_report = ledger.get_submissions(outcome.run_id)[1]["report"]
+        if jev_status == 200:
+            assert _referee_row(ledger, outcome.run_id) == (
+                "stale_or_missing_information",
+                0,
+                "late",
+            )
+            assert "## Disagreement\n- stale_or_missing_information" in final_report
+        else:
+            assert _referee_row(ledger, outcome.run_id) == (None, 0, "jev_failed")
+            assert "## Disagreement" not in final_report
+    finally:
+        ledger.close()
+
+
+@dataclass
+class SecondCallGuard:
+    """Lets everything through at the draw; on the referee's check, drops a model.
+
+    `listed` says whether the dropped model also appears in `excluded_ids` (the
+    context-fit filter drops models without listing them), `error` raises instead.
+    """
+
+    dropped_id: str = "model-b"
+    listed: bool = True
+    error: Exception | None = None
+    prompt_chars: list[int] = field(default_factory=list)
+
+    async def restrict(
+        self, models: list[ModelSpec], prompt_chars: int, ledger: Ledger, now: object
+    ) -> PacingResult:
+        self.prompt_chars.append(prompt_chars)
+        if len(self.prompt_chars) == 1:
+            return PacingResult(models, 1.0, 8.0, [])
+        if self.error is not None:
+            raise self.error
+        return PacingResult(
+            [m for m in models if m.id != self.dropped_id],
+            1.5,
+            8.0,
+            [self.dropped_id] if self.listed else [],
+        )
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["excluded", "silently-dropped"])
+async def test_a_budget_excluded_model_skips_the_rerun(
+    tmp_path: Path,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+    listed: bool,
+) -> None:
+    caplog.set_level(logging.INFO)
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(referee=_luna("unused", ["unused"]))
+    metaculus = FakeMetaculus()
+    guard = SecondCallGuard(listed=listed)
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger, budget=guard)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert "referee: re-run skipped (budget)" in caplog.messages
+        # Asked before Luna or IW spend anything, with the first prompt's length.
+        assert guard.prompt_chars == [len(llm.prompts[0][1])] * 2
+        assert llm.referee_prompts == []
+        assert len(llm.prompts) == 2
+        assert len(_iw_research_bodies(httpx_mock)) == 1
+        assert _posted_binary(metaculus) == pytest.approx(
+            [FIRST_AVERAGE, FIRST_AVERAGE]
+        )
+        assert len(_comment_texts(metaculus)) == 1
+        assert _referee_row(ledger, outcome.run_id) == (
+            "stale_or_missing_information",
+            0,
+            "budget",
+        )
+        final_report = ledger.get_submissions(outcome.run_id)[1]["report"]
+        assert "## Disagreement\n- stale_or_missing_information" in final_report
+    finally:
+        ledger.close()
+
+
+async def test_an_unexpected_referee_error_falls_back_to_the_first_average(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(referee=_luna("unused", ["unused"]))
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(
+            tmp_path,
+            llm,
+            clock,
+            metaculus,
+            ledger,
+            budget=SecondCallGuard(error=RuntimeError("guard blew up")),
+        )
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert _posted_binary(metaculus) == pytest.approx(
+            [FIRST_AVERAGE, FIRST_AVERAGE]
+        )
+        assert len(_comment_texts(metaculus)) == 1
+        assert _referee_row(ledger, outcome.run_id) == (
+            "stale_or_missing_information",
+            0,
+            "error",
+        )
+    finally:
+        ledger.close()
+
+
+async def test_a_rerun_over_the_asknews_budget_asks_iw_for_free_providers_only(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(
+        referee=_luna("The vote date moved.", ["vote date postponed", "second query"])
+    )
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        # The first research (2 calls) fits 3; the second (2 + 2 queries) does not.
+        deps = _referee_deps(
+            tmp_path, llm, clock, metaculus, ledger, asknews_monthly_calls=3
+        )
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        first_body, second_body = _iw_research_bodies(httpx_mock)
+        assert "providers" not in first_body
+        assert second_body["providers"] == list(FREE_NEWS_PROVIDERS)
+        assert second_body["extra_queries"] == ["vote date postponed", "second query"]
+        assert _asknews_rows(tmp_path) == [(outcome.run_id, 2)]
+    finally:
+        ledger.close()
+
+
+async def test_forecasts_that_agree_never_reach_the_referee(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock)
+    llm = _two_model_llm(first_b="Summary: close.\nProbability: 60%")
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert _posted_binary(metaculus) == pytest.approx([0.6375])
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("final", 1, pytest.approx(0.6375))
+        ]
+        assert httpx_mock.get_requests(url=JEV_URL) == []
+        assert ledger.get_referee(outcome.run_id or 0) is None
+    finally:
+        ledger.close()
+
+
+async def test_without_a_jev_client_a_divergence_is_posted_as_before(
+    tmp_path: Path, httpx_mock: HTTPXMock
+) -> None:
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock)
+    llm = _two_model_llm()
+    metaculus = FakeMetaculus()
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, metaculus, ledger, jev=None)
+
+        outcome = await _run_diverging(deps, clock)
+
+        assert outcome.status == "submitted"
+        assert _posted_binary(metaculus) == pytest.approx([FIRST_AVERAGE])
+        assert _submission_rows(ledger, outcome.run_id) == [
+            ("final", 1, pytest.approx(FIRST_AVERAGE))
+        ]
+        assert len(_comment_texts(metaculus)) == 1
+        assert ledger.get_referee(outcome.run_id or 0) is None
+    finally:
+        ledger.close()
+
+
+async def test_referee_logs_carry_class_names_and_ids_only(
+    tmp_path: Path, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    clock = FakeClock(NOW)
+    _mock_iw(httpx_mock, SECOND_RESEARCH)
+    _mock_jev(httpx_mock, "stale_or_missing_information")
+    llm = _two_model_llm(
+        referee=_luna("The vote date moved.", ["vote date postponed", "second query"])
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    try:
+        deps = _referee_deps(tmp_path, llm, clock, FakeMetaculus(), ledger)
+
+        await _run_diverging(deps, clock)
+
+        logged = "\n".join(r.getMessage() for r in caplog.records)
+        assert "referee: metaculus:123 class=stale_or_missing_information" in logged
+        assert "referee: metaculus:123 re-run with 2 extra queries" in logged
+        for secret in (
+            *NO_LEAK,
+            "Second look",
+            "vote date",
+            "second query",
+            "The vote date moved",
+            "0.5875",
+            "0.575",
+            "0.65",
+            "58.75",
+            "57.5",
+            "jev_test_key",
+        ):
+            assert secret not in logged
+    finally:
+        ledger.close()
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ((0.64, 0.50), False),
+        ((0.66, 0.50), True),
+        ((0.50, 0.66), True),
+    ],
+)
+def test_binary_divergence_bar_is_more_than_fifteen_points(
+    values: tuple[float, float], expected: bool
+) -> None:
+    results = {
+        mid: _model_result(mid, value) for mid, value in zip("ab", values, strict=True)
+    }
+
+    assert _diverged("binary", results, ["a", "b"]) is expected
+
+
+def test_divergence_needs_exactly_two_models() -> None:
+    results = {"a": _model_result("a", 0.9)}
+
+    assert _diverged("binary", results, ["a"]) is False
+
+
+def test_multiple_choice_divergence_bar_is_total_variation_above_a_fifth() -> None:
+    near = {"x": _model_result("x", {"A": 0.5, "B": 0.5})}
+    far = {"y": _model_result("y", {"A": 0.69, "B": 0.31})}
+    farther = {"z": _model_result("z", {"A": 0.71, "B": 0.29})}
+
+    assert _diverged("multiple_choice", {**near, **far}, ["x", "y"]) is False
+    assert _diverged("multiple_choice", {**near, **farther}, ["x", "z"]) is True
+
+
+def test_numeric_divergence_bar_is_a_quarter_of_the_range_between_medians() -> None:
+    def cdf(median_index: int) -> list[float]:
+        return [0.0 if i < median_index else 1.0 for i in range(101)]
+
+    near = {"x": _model_result("x", cdf(40)), "y": _model_result("y", cdf(65))}
+    far = {"x": _model_result("x", cdf(40)), "y": _model_result("y", cdf(66))}
+
+    assert _diverged("numeric", near, ["x", "y"]) is False
+    assert _diverged("numeric", far, ["x", "y"]) is True
+
+
+def _model_result(model_id: str, value: object) -> ModelResult:
+    return ModelResult(
+        model_id=model_id,
+        rationale="",
+        cost_usd=0.0,
+        tokens_in=0,
+        tokens_out=0,
+        value=value,  # type: ignore[arg-type]
+        summary="",
+    )
