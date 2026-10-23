@@ -9,7 +9,10 @@ Actions jobs ("shifts"). Each shift:
 2. Starts iw-server as a subprocess and waits for `/health`.
 3. Replays any spooled degraded-mode outbox documents into IW.
 4. Runs the daemon poll loop, snapshotting after every completed question
-   and every 15 minutes.
+   and every 15 minutes. Beside it, a background task refreshes the model
+   weights (`betomcat.weights`) at shift start and hourly, but only while
+   `weights.json` was not already updated today (UTC); a failure is logged
+   and retried on the next tick.
 5. Stops claiming new questions 25 minutes before the shift ends, drains
    in-flight pipelines for another 20 minutes, then abandons whatever is
    still running -- the next shift marks those runs' ledger rows
@@ -51,6 +54,7 @@ from betomcat import state
 from betomcat.config import Settings
 from betomcat.daemon import DaemonHooks, run_daemon
 from betomcat.pipeline import PipelineOutcome
+from betomcat.weights import update_weights, weights_updated_today
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ DRAIN_STOP_BEFORE_END = timedelta(minutes=5)
 CLAIM_STOP_FRACTION = 0.3
 DRAIN_STOP_FRACTION = 0.1
 SNAPSHOT_INTERVAL_SECONDS = 15 * 60
+WEIGHT_UPDATE_INTERVAL_SECONDS = 60 * 60
 IW_HEALTH_TIMEOUT_SECONDS = 90.0
 IW_STOP_TIMEOUT_SECONDS = 20.0
 # Gemma is left out: its Google free-tier quota is shared with v2 (BUILD_LOG
@@ -207,6 +212,32 @@ async def _periodic_snapshot(
             await snapshot()
 
 
+async def _periodic_weight_update(
+    *,
+    stop_event: asyncio.Event,
+    update: Callable[[], Awaitable[bool]],
+    snapshot: Callable[[], Awaitable[None]],
+    interval_seconds: float = WEIGHT_UPDATE_INTERVAL_SECONDS,
+) -> None:
+    """Call `update` now and then every `interval_seconds` until `stop_event`.
+
+    `update` returns True when it rewrote the weights, which is the cue to
+    snapshot. The weights are never worth stopping a shift for, so any failure
+    is logged and retried on the next tick.
+    """
+    while not stop_event.is_set():
+        try:
+            if await update():
+                await snapshot()
+        except Exception:
+            # Broad on purpose: a weight-update bug or network error must never
+            # take the shift down. CancelledError is a BaseException, so
+            # cancelling the task at shift end still gets through.
+            logger.exception("weight update failed; retrying on the next tick")
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+
+
 def _dispatch_flag_path() -> Path:
     return Path(os.environ.get("DISPATCH_FLAG_PATH", ".betomcat-dispatched"))
 
@@ -302,7 +333,7 @@ async def run_host(
 
             # Deferred import: cli.py imports `run_host` from this module, so
             # importing it back at module scope would be circular.
-            from betomcat.cli import build_deps, replay_outbox
+            from betomcat.cli import DEFAULT_POOL_PATH, build_deps, replay_outbox
 
             deps = build_deps(settings, settings.dry_run)
             try:
@@ -355,6 +386,17 @@ async def run_host(
                         stop_claiming.value = True
                         stop_event.set()
 
+                async def refresh_weights_if_stale() -> bool:
+                    if weights_updated_today(data_dir, datetime.now(UTC)):
+                        return False
+                    await update_weights(
+                        deps.ledger,
+                        data_dir,
+                        DEFAULT_POOL_PATH,
+                        settings.metaculus_token,
+                    )
+                    return True
+
                 timer_task = asyncio.create_task(
                     _shift_timer(
                         claim_stop_at=claim_stop_at,
@@ -367,6 +409,13 @@ async def run_host(
                 )
                 snapshot_task = asyncio.create_task(
                     _periodic_snapshot(stop_event=stop_event, snapshot=do_snapshot)
+                )
+                weights_task = asyncio.create_task(
+                    _periodic_weight_update(
+                        stop_event=stop_event,
+                        update=refresh_weights_if_stale,
+                        snapshot=do_snapshot,
+                    )
                 )
                 try:
                     drain_budget = max(0.0, (shift_end - drain_stop_at).total_seconds())
@@ -383,7 +432,7 @@ async def run_host(
                         ),
                     )
                 finally:
-                    for task in (timer_task, snapshot_task):
+                    for task in (timer_task, snapshot_task, weights_task):
                         task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await task

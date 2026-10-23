@@ -111,6 +111,29 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+WEIGHTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS resolutions (
+    question_id TEXT PRIMARY KEY REFERENCES questions(question_id),
+    status TEXT NOT NULL,
+    resolution TEXT,
+    field_log_score REAL,
+    scaling_json TEXT,
+    scheduled_resolve_time TIMESTAMP,
+    fetched_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_scores (
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    model_id TEXT NOT NULL,
+    question_id TEXT NOT NULL REFERENCES questions(question_id),
+    score REAL NOT NULL,
+    method TEXT NOT NULL,
+    scored_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (run_id, model_id)
+);
+"""
+
+
 @dataclass(frozen=True)
 class RunHandle:
     """A started run, returned so callers can finish/annotate it."""
@@ -129,6 +152,7 @@ class Ledger:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        self._conn.executescript(WEIGHTS_SCHEMA)
         self._migrate_submissions_report_column()
         self._conn.commit()
 
@@ -453,6 +477,128 @@ class Ledger:
             (model_id, limit),
         ).fetchall()
         return [float(row[0]) for row in rows]
+
+    # -- resolutions and model scores (weights.py) ---------------------------
+
+    def forecasted_questions(self) -> list[dict[str, Any]]:
+        """Questions with at least one `ok` model forecast, oldest id first."""
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT questions.*
+            FROM questions
+            JOIN runs ON runs.question_id = questions.question_id
+            JOIN model_forecasts ON model_forecasts.run_id = runs.id
+            WHERE model_forecasts.status = 'ok'
+              AND model_forecasts.forecast_json IS NOT NULL
+            ORDER BY questions.question_id
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def last_ok_forecasts(self, question_id: str) -> list[dict[str, Any]]:
+        """Each (run, model)'s last `ok` forecast on `question_id`.
+
+        Rows carry `run_id`, `model_id` and `forecast_json`.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT mf.run_id, mf.model_id, mf.forecast_json
+            FROM model_forecasts AS mf
+            JOIN runs ON runs.id = mf.run_id
+            WHERE runs.question_id = ?
+              AND mf.status = 'ok'
+              AND mf.forecast_json IS NOT NULL
+              AND mf.id = (
+                  SELECT MAX(id) FROM model_forecasts
+                  WHERE run_id = mf.run_id AND model_id = mf.model_id
+                    AND status = 'ok' AND forecast_json IS NOT NULL
+              )
+            ORDER BY mf.id
+            """,
+            (question_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_resolution(self, question_id: str) -> dict[str, Any] | None:
+        """The cached `resolutions` row for `question_id`, or `None` if unfetched."""
+        row = self._conn.execute(
+            "SELECT * FROM resolutions WHERE question_id = ?", (question_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def upsert_resolution(
+        self,
+        question_id: str,
+        status: str,
+        resolution: str | None,
+        field_log_score: float | None,
+        scaling: object,
+        scheduled_resolve_time: str | None,
+        fetched_at: str,
+    ) -> None:
+        """Cache what the API said about `question_id` (`scaling` is stored as JSON)."""
+        self._conn.execute(
+            """
+            INSERT INTO resolutions
+                (question_id, status, resolution, field_log_score, scaling_json,
+                 scheduled_resolve_time, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(question_id) DO UPDATE SET
+                status = excluded.status,
+                resolution = excluded.resolution,
+                field_log_score = excluded.field_log_score,
+                scaling_json = excluded.scaling_json,
+                scheduled_resolve_time = excluded.scheduled_resolve_time,
+                fetched_at = excluded.fetched_at
+            """,
+            (
+                question_id,
+                status,
+                resolution,
+                field_log_score,
+                orjson.dumps(scaling).decode() if scaling is not None else None,
+                scheduled_resolve_time,
+                fetched_at,
+            ),
+        )
+        self._conn.commit()
+
+    def record_model_score(
+        self,
+        run_id: int,
+        model_id: str,
+        question_id: str,
+        score: float,
+        method: str,
+    ) -> int:
+        """Store one (run, model) score, replacing an earlier one that differs.
+
+        Returns:
+            1 if a row was inserted or replaced, 0 if the same score was there.
+        """
+        cursor = self._conn.execute(
+            """
+            INSERT INTO model_scores
+                (run_id, model_id, question_id, score, method, scored_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, model_id) DO UPDATE SET
+                score = excluded.score,
+                method = excluded.method,
+                scored_at = excluded.scored_at
+            WHERE model_scores.score != excluded.score
+               OR model_scores.method != excluded.method
+            """,
+            (run_id, model_id, question_id, score, method, _now_iso()),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
+    def get_model_scores(self) -> list[dict[str, Any]]:
+        """Every `model_scores` row, ordered by run then model."""
+        rows = self._conn.execute(
+            "SELECT * FROM model_scores ORDER BY run_id, model_id"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # -- submissions --------------------------------------------------------
 

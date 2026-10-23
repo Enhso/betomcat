@@ -509,3 +509,119 @@ def test_ledger_adds_asknews_calls_table_to_a_file_that_predates_it(
         assert reopened.asknews_calls_since("2000-01-01T00:00:00Z") == 3
     finally:
         reopened.close()
+
+
+def _record_forecast(
+    ledger: Ledger, run_id: int, model_id: str, status: str, forecast: object
+) -> None:
+    ledger.record_model_forecast(
+        run_id,
+        model_id,
+        attempt=1,
+        started_at="2026-09-22T19:00:00Z",
+        finished_at="2026-09-22T19:00:05Z",
+        status=status,
+        forecast=forecast,
+        rationale=None,
+        cost_usd=None,
+        tokens_in=None,
+        tokens_out=None,
+        error=None,
+    )
+
+
+def test_ledger_adds_weight_tables_to_a_snapshot_that_predates_them(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.sqlite"
+    Ledger(path).close()
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE resolutions")
+    raw.execute("DROP TABLE model_scores")
+    raw.commit()
+    raw.close()
+
+    ledger = Ledger(path)
+    try:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        assert ledger.get_resolution("metaculus:1") is None
+        assert ledger.get_model_scores() == []
+        ledger.upsert_resolution("metaculus:1", "pending", None, None, None, None, "t")
+        assert ledger.record_model_score(run.id, "model-a", "metaculus:1", 0.5, "peer")
+        assert ledger.get_resolution("metaculus:1") is not None
+    finally:
+        ledger.close()
+
+
+def test_resolution_round_trip_and_overwrite(tmp_path: Path) -> None:
+    with Ledger(tmp_path / "ledger.sqlite") as ledger:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+
+        ledger.upsert_resolution(
+            "metaculus:1", "pending", None, None, None, "2026-10-17T00:00:00Z", "t1"
+        )
+        pending = ledger.get_resolution("metaculus:1")
+        assert pending == {
+            "question_id": "metaculus:1",
+            "status": "pending",
+            "resolution": None,
+            "field_log_score": None,
+            "scaling_json": None,
+            "scheduled_resolve_time": "2026-10-17T00:00:00Z",
+            "fetched_at": "t1",
+        }
+
+        ledger.upsert_resolution(
+            "metaculus:1", "resolved", "no", -0.17, {"type": "binary"}, None, "t2"
+        )
+        resolved = ledger.get_resolution("metaculus:1")
+        assert resolved is not None
+        assert resolved["status"] == "resolved"
+        assert resolved["field_log_score"] == -0.17
+        assert resolved["scaling_json"] == '{"type":"binary"}'
+        assert resolved["fetched_at"] == "t2"
+
+
+def test_model_score_is_unique_per_run_and_model(tmp_path: Path) -> None:
+    with Ledger(tmp_path / "ledger.sqlite") as ledger:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        run = ledger.start_run("metaculus:1")
+        record = ledger.record_model_score
+
+        assert record(run.id, "model-a", "metaculus:1", 0.5, "baseline") == 1
+        assert record(run.id, "model-a", "metaculus:1", 0.5, "baseline") == 0
+        assert record(run.id, "model-b", "metaculus:1", -1.0, "baseline") == 1
+        # A changed score or method replaces the row; the row stays unique.
+        assert record(run.id, "model-a", "metaculus:1", 0.25, "peer") == 1
+        assert record(run.id, "model-b", "metaculus:1", -2.0, "baseline") == 1
+
+        scores = [
+            (r["model_id"], r["score"], r["method"]) for r in ledger.get_model_scores()
+        ]
+        assert scores == [("model-a", 0.25, "peer"), ("model-b", -2.0, "baseline")]
+
+
+def test_forecasted_questions_and_last_ok_forecasts(tmp_path: Path) -> None:
+    with Ledger(tmp_path / "ledger.sqlite") as ledger:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+        ledger.upsert_question("metaculus:2", "Will Y?", "binary", None, None)
+        ledger.upsert_question("metaculus:3", "Will Z?", "binary", None, None)
+        run1 = ledger.start_run("metaculus:1")
+        run2 = ledger.start_run("metaculus:2")
+        ledger.start_run("metaculus:3")  # no forecast at all
+        _record_forecast(ledger, run1.id, "model-a", "ok", 0.9)
+        _record_forecast(ledger, run1.id, "model-a", "ok", 0.2)
+        _record_forecast(ledger, run1.id, "model-a", "failed", None)
+        _record_forecast(ledger, run1.id, "model-b", "ok", 0.7)
+        _record_forecast(ledger, run2.id, "model-a", "failed", None)
+
+        assert [q["question_id"] for q in ledger.forecasted_questions()] == [
+            "metaculus:1"
+        ]
+        last = ledger.last_ok_forecasts("metaculus:1")
+        assert [(r["run_id"], r["model_id"], r["forecast_json"]) for r in last] == [
+            (run1.id, "model-a", "0.2"),
+            (run1.id, "model-b", "0.7"),
+        ]
+        assert ledger.last_ok_forecasts("metaculus:2") == []

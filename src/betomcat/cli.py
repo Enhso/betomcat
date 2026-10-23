@@ -10,6 +10,8 @@ Subcommands:
                                            snapshot for offline review.
     betomcat check-models              -- compare the model pool with OpenRouter's
                                            catalog and rewrite it in place.
+    betomcat update-weights            -- score resolved questions and rewrite
+                                           DATA_DIR/weights.json.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from betomcat.llm import OpenRouterClient
 from betomcat.metaculus import MetaculusWrapper
 from betomcat.pipeline import PipelineDeps, run_pipeline
 from betomcat.research import IWClient
+from betomcat.weights import update_weights
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +195,16 @@ def _cmd_check_models(pool_path: Path, body_out: Path | None) -> None:
     print(result.summary)
 
 
+async def _cmd_update_weights(settings: Settings) -> None:
+    ledger = Ledger(settings.data_dir / "ledger.sqlite")
+    try:
+        await update_weights(
+            ledger, settings.data_dir, DEFAULT_POOL_PATH, settings.metaculus_token
+        )
+    finally:
+        ledger.close()
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="betomcat")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +240,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     check_models_parser.add_argument("--pool", type=Path, default=DEFAULT_POOL_PATH)
     check_models_parser.add_argument("--body-out", type=Path, default=None)
 
+    subparsers.add_parser(
+        "update-weights", help="score resolved questions and rewrite weights.json"
+    )
+
     return parser.parse_args(argv)
 
 
@@ -253,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(_cmd_pull_state(settings, Path(args.out_dir)))
     elif args.command == "check-models":
         _cmd_check_models(args.pool, args.body_out)
+    elif args.command == "update-weights":
+        asyncio.run(_cmd_update_weights(settings))
     return 0
 
 

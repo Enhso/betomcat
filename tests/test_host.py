@@ -18,6 +18,7 @@ from betomcat.host import (
     _dispatch_successor,
     _iw_env,
     _MutableFlag,
+    _periodic_weight_update,
     _RedactingFilter,
     _shift_margins,
     _shift_timer,
@@ -284,5 +285,186 @@ async def test_run_host_abandons_unfinished_runs_before_the_daemon_loop_starts(
     assert daemon_calls == [1]
     assert any(
         "marked 1 unfinished run(s) from earlier shifts abandoned" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def _run_weight_task_for(
+    seconds: float, update: object, snapshot: object, interval: float = 0.01
+) -> None:
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(
+        _periodic_weight_update(
+            stop_event=stop_event,
+            update=update,  # type: ignore[arg-type]
+            snapshot=snapshot,  # type: ignore[arg-type]
+            interval_seconds=interval,
+        )
+    )
+    await asyncio.sleep(seconds)
+    stop_event.set()
+    await asyncio.wait_for(task, timeout=5)
+
+
+async def test_weight_task_updates_at_start_and_every_tick_then_snapshots() -> None:
+    calls: list[str] = []
+    rewrote = iter([True, False, True])  # then False: the weights are current
+
+    async def update() -> bool:
+        calls.append("update")
+        return next(rewrote, False)
+
+    async def snapshot() -> None:
+        calls.append("snapshot")
+
+    await _run_weight_task_for(0.1, update, snapshot)
+
+    assert calls[:5] == ["update", "snapshot", "update", "update", "snapshot"]
+    assert calls.count("snapshot") == 2
+
+
+async def test_weight_task_logs_a_failure_and_retries_on_the_next_tick(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    attempts: list[int] = []
+    snapshots: list[int] = []
+
+    async def update() -> bool:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("metaculus is down")
+        return True
+
+    async def snapshot() -> None:
+        snapshots.append(1)
+
+    with caplog.at_level(logging.ERROR):
+        await _run_weight_task_for(0.1, update, snapshot)
+
+    assert len(attempts) > 1
+    assert snapshots
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == [
+        "weight update failed; retrying on the next tick"
+    ]
+
+
+async def test_weight_task_stops_at_once_when_the_shift_ends() -> None:
+    async def update() -> bool:
+        return False
+
+    async def snapshot() -> None:
+        raise AssertionError("nothing was updated")
+
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(
+        _periodic_weight_update(
+            stop_event=stop_event,
+            update=update,
+            snapshot=snapshot,
+            interval_seconds=3600,
+        )
+    )
+    await asyncio.sleep(0.01)
+    stop_event.set()
+
+    await asyncio.wait_for(task, timeout=1)
+
+
+async def _run_host_with_weights(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_update: object,
+    weights_json: dict[str, object] | None,
+) -> list[str]:
+    """Run one fake shift whose daemon lingers long enough for the weight task."""
+    iw_dir = tmp_path / "iw"
+    (iw_dir / "target" / "release").mkdir(parents=True)
+    (iw_dir / "target" / "release" / "iw-server").touch()
+    monkeypatch.setenv("IW_DIR", str(iw_dir))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    if weights_json is not None:
+        (data_dir / "weights.json").write_bytes(orjson.dumps(weights_json))
+    events: list[str] = []
+
+    async def fake_create_subprocess_exec(
+        *args: object, **kwargs: object
+    ) -> _FakeIwProcess:
+        return _FakeIwProcess()
+
+    async def fake_wait_for_health(*args: object, **kwargs: object) -> None:
+        return None
+
+    async def fake_run_daemon(
+        tournaments: tuple[int | str, ...],
+        deps: PipelineDeps,
+        poll_seconds: int,
+        hooks: DaemonHooks | None = None,
+    ) -> None:
+        await asyncio.sleep(0.1)
+        events.append("shift finished")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("betomcat.host._wait_for_health", fake_wait_for_health)
+    monkeypatch.setattr("betomcat.host.run_daemon", fake_run_daemon)
+    monkeypatch.setattr("betomcat.host.update_weights", fake_update)
+
+    await run_host(_host_settings(data_dir), shift_minutes=10, local=True)
+    return events
+
+
+async def test_run_host_updates_stale_weights_in_the_background(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    async def fake_update(*args: object, **kwargs: object) -> None:
+        calls.append(args)
+
+    events = await _run_host_with_weights(
+        monkeypatch, tmp_path, fake_update, {"updated_at": "2020-01-01T00:00:00Z"}
+    )
+
+    assert events == ["shift finished"]
+    assert len(calls) == 1
+    ledger, data_dir, pool_path, token = calls[0]
+    assert isinstance(ledger, Ledger)
+    assert data_dir == tmp_path / "data"
+    assert Path(str(pool_path)).name == "models.yaml"
+    assert token is None
+
+
+async def test_run_host_skips_the_update_when_weights_are_from_today(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[object] = []
+
+    async def fake_update(*args: object, **kwargs: object) -> None:
+        calls.append(args)
+
+    today = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    events = await _run_host_with_weights(
+        monkeypatch, tmp_path, fake_update, {"updated_at": today}
+    )
+
+    assert events == ["shift finished"]
+    assert calls == []
+
+
+async def test_run_host_survives_a_failing_weight_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def failing_update(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("metaculus is down")
+
+    with caplog.at_level(logging.ERROR):
+        events = await _run_host_with_weights(
+            monkeypatch, tmp_path, failing_update, None
+        )
+
+    assert events == ["shift finished"]
+    assert any(
+        r.getMessage() == "weight update failed; retrying on the next tick"
         for r in caplog.records
     )
