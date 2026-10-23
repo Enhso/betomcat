@@ -283,14 +283,14 @@ models:
 
   - id: minimax/minimax-m3.1-flash:free
     tier: free
-    enabled: true
+    enabled: false
     max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
     price_out: 0
     context_tokens: 1000000
-    notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-19); not probed yet."
+    notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-19); not probed yet. Disabled 2026-10-23 after a probe: the :free variant was retired on 2026-10-22."
 
   - id: nvidia/nemotron-3.5-super-vl:free
     tier: free
@@ -301,15 +301,15 @@ models:
     price_in: 0
     price_out: 0
     context_tokens: 1000000
-    notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-15); not probed yet."
+    notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-15). Probe ok on the free key 2026-10-23."
 
   - id: xingchen-agi/xing4.0-29b-a4b:free
     tier: free
-    enabled: true
+    enabled: false
     max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
     price_out: 0
     context_tokens: 262144
-    notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-16); not probed yet."
+    notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-16); not probed yet. Disabled 2026-10-23 after a probe: 3/3 upstream 429s."
