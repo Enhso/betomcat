@@ -104,8 +104,11 @@ tournament.
 
 ### Where it departs from the plan today
 
-- Model weights are not computed yet: every draw is uniform. They matter once
-  MiniBench round 2 resolves (15-19 Oct).
+- Model weights score each model against the other forecasters on the
+  question, not against the community prediction as planned: Metaculus hides
+  the community prediction from bot accounts. The field's average is backed
+  out of the bot's own peer score, which is also what the tournament ranks
+  on. Weights went live on 23 Oct.
 - Not built yet: the disagreement referee, Hatim's own forecasting history as
   context, the weekly digest, suggestions for merging families.
 - The bot's own forecasts and their outcomes are never written back into the

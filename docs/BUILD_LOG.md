@@ -697,3 +697,29 @@ Decisions (defaults in force until answered):
   look-back) where the old one used `hours_back=720`; Google's `when:30d`
   carries the month. Calls already spent since 22 Oct by the old code are
   not in the new table, so this cycle's count starts low by about 20.
+- **E1 shipped** (`43d6b09` betomcat, `486147a` IW): `ci.yml` in both repos
+  (push to `main` and PRs; IW's Rust job syncs the Python worker first since
+  several tests spawn it), and a `Test gate` step in `host.yml` before the
+  shift; when it fails, the successor dispatch is skipped and the `*/30`
+  schedule retries. The brittle `test_fixture_against_the_real_pool` now
+  reads the pool frozen at `b2aae71`, plus a test that the real pool keeps
+  two enabled models. First CI runs green on both repos. Haiku built it from
+  a written spec; the lead re-ran the gates.
+- **5.3 weights shipped** (`7685db9`). Built by a Sonnet builder. Finding:
+  Metaculus hides the community prediction from bot accounts (all
+  `aggregations` null on 171 posts read with the bot token), so the decided
+  CP-relative score cannot run. **Decided (Hatim): score against the field.**
+  vezo3's `my_forecasts.score_data.spot_peer_score` is
+  `100 * N/(N-1) * ln(p / geometric mean of all forecasters)` on the bucket
+  mass, halved on continuous questions (Metaculus `scoring/score_math.py`),
+  i.e. 100 (or 50) times vezo3's log mass minus the other forecasters' mean.
+  So F = ln(m_bot) - peer / 100 (/ 50 continuous) and a model scores
+  ln(m_model) - F. Lead checks: `spot_baseline_score` equals
+  100*log2(p/0.5) for `my_forecasts.latest` on post 45948 (so that is the
+  scored forecast); the builder had /100 everywhere, the lead fixed
+  continuous to /50 from the Metaculus source. Real run on a copy of the
+  live ledger: 183 closed questions fetched in 5 min, 61 resolved, 122
+  scores all `peer`, 7 models past 10 questions, weights 0.84-1.32.
+  Assumes `my_forecasts.latest` is the spot-scored forecast (spot time =
+  close on every post seen). `resolution: null` on a resolved post is
+  treated as pending (refetched weekly), never as annulled.
