@@ -25,6 +25,7 @@ from betomcat.pool import effective_key, load_pool
 
 TODAY = date(2026, 10, 9)
 FIXTURE = Path(__file__).parent / "fixtures" / "openrouter_models.json"
+POOL_FIXTURE = Path(__file__).parent / "fixtures" / "models_pool_2026-10-09.yaml"
 REAL_POOL = REPO_ROOT / "config" / "models.yaml"
 BODY_FOOTER = (
     "Merge to apply from the next shift. To decline an added model, set its "
@@ -406,9 +407,9 @@ def test_catalog_that_is_too_small_raises_and_changes_nothing(tmp_path: Path) ->
     assert not body_path.exists()
 
 
-def test_fixture_against_the_real_pool(tmp_path: Path) -> None:
+def test_fixture_against_the_pool_of_2026_10_09(tmp_path: Path) -> None:
     pool_path = tmp_path / "models.yaml"
-    shutil.copyfile(REAL_POOL, pool_path)
+    shutil.copyfile(POOL_FIXTURE, pool_path)
     original = pool_path.read_text("utf-8")
     body_path = tmp_path / "body.md"
 
@@ -438,6 +439,11 @@ def test_fixture_against_the_real_pool(tmp_path: Path) -> None:
     assert pool["openai/gpt-6.1-sol"].enabled is True
     assert pool["openai/gpt-6.1-sol"].price_out == 10
     assert pool_path.read_text("utf-8") != original
+
+
+def test_real_pool_has_two_enabled_models() -> None:
+    enabled = [m for m in load_pool(REAL_POOL).models if m.enabled]
+    assert len(enabled) >= 2
 
 
 def test_fetch_catalog_returns_the_data_list(httpx_mock: HTTPXMock) -> None:

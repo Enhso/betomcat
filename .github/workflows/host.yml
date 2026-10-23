@@ -79,6 +79,10 @@ jobs:
       - name: Sync betomcat dependencies
         run: uv sync
 
+      - name: Test gate
+        id: tests
+        run: uv run pytest -q
+
       - name: Sync iw-research worker dependencies
         working-directory: iw/python
         run: uv sync
@@ -103,7 +107,7 @@ jobs:
       # timed out, or was cancelled before reaching that point, this
       # dispatches the successor anyway so a shift is never dropped.
       - name: Dispatch successor if the host step did not already
-        if: always()
+        if: always() && steps.tests.outcome != 'failure'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
