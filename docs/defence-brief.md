@@ -9,7 +9,7 @@ what was known when.
 This repository is public. Nothing here may contain a forecast, rationale or
 claim for a question that is still open.
 
-Last updated: 2026-10-09.
+Last updated: 2026-10-23.
 
 ## 1. What betomcat is
 
@@ -115,6 +115,61 @@ tournament.
   provider running out (see 2026-10-09 below).
 
 ## 3. What the evidence says
+
+### 2026-10-23 (covers 10 to 23 Oct)
+
+**In short.** The first scores are in. betomcat ranked 49th of 306 bots in
+MiniBench round 2, and the control ranked 186th. The result is weaker than
+it looks: 23 of betomcat's 59 round-2 forecasts had no research, the control
+covered only 32 of the 57 scored questions, and the two bots run different
+models. From 10 to 22 Oct betomcat forecast without research,
+because the Workbench update that restores it was merged but never deployed.
+
+**MiniBench round 2 (opened 5-7 Oct, finalized).** 57 questions were scored.
+betomcat: rank 49 of 306, peer score 272 (Metaculus's interval 60 to 483,
+rank interval 14 to 109), no prize. The control: rank 186, score -403, on 32
+of the 57. The top seven bots scored 556 to 699.
+
+**FE Fall.** Two questions have resolved, too few to read anything into.
+
+**Research.** All 107 of betomcat's forecasts from 10 to 22 Oct used only the
+question text, including all 58 of MiniBench round 3 (opened 19 Oct). Over
+the season, 137 of its 183 submissions had no research. The Workbench's
+free-source update (Google News, Bing News, Wikipedia, 1-call AskNews) was
+merged on 11 Oct but not pushed, so every shift kept running the old
+AskNews-only code. The AskNews wallet refilled on 22 Oct, and the first
+forecasts with research since 5 Oct came on 23 Oct, on the old code that
+spends about 11 AskNews calls a question.
+
+**The control in round 3.** It has forecast 21 of the 58 questions so far,
+against betomcat's 58, although it has had the free-source blend since 9 Oct.
+
+**Models.** Seven pool models now have at least 10 resolved questions, the
+point at which weights leave uniform: gpt-6-astra and claude-fable-5.1 (18
+each), gpt-6-luna (17), claude-sonnet-5 (14), nemotron-3-ultra (13), gpt-6-sol
+and nemotron-3-super (12). The weight update is not built, so every draw is
+still uniform.
+
+**Cost.** $69.64 of credit is left ($81 on 9 Oct). Forecast calls in the
+ledger cost $9.81 over the 107 questions to 22 Oct, about $0.09 each without
+research; the two forecasts with research on 23 Oct cost about $0.37 each
+(two runs only; the Workbench's own calls on the same key come on top). The budget
+guard's pacing horizon ended on 19 Oct, so it no longer limits daily spend,
+and the $50 round allowance is now most of what is left.
+
+**Hosting.** From 19 to 23 Oct every shift started within a minute of the
+previous one ending.
+
+**What a sceptic should press on.**
+
+1. One round, a wide interval (rank 14 to 109), and the confounds above.
+2. Round 3 reverses the confound: betomcat without research, the control
+   with it. Its score says little about the Workbench either way.
+3. Three quarters of betomcat's record so far was made without the research
+   layer the design rests on.
+
+**Watch next.** Deploying the Workbench update before the AskNews wallet runs
+dry again; MiniBench round 3 scores (round closes 6 Nov).
 
 ### 2026-10-09 (covers 24 Sep to 9 Oct)
 

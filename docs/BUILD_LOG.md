@@ -645,3 +645,55 @@ Decisions (defaults in force until answered):
 - **PR #1 merged by Hatim** (`2ee5231`), unchanged: the five proposed
   models are in the pool (12 paid, 4 free enabled), unprobed; the ledger's
   failure rates will show if any cannot be called on the funded key.
+
+### 2026-10-23
+
+- **State on return (14 days unattended).** Shift chains of both bots
+  unbroken. MiniBench round 2 finalized: vezo3 rank 49/306 (peer 272, rank
+  interval 14-109, 57/57 scored), vezocontrol rank 186 (-403, 32/57).
+  Round 3 (project 33132, opened 19 Oct): vezo3 58/58, vezocontrol 21/58
+  (the Gemma free-tier quota on burst days, as found 2026-09-24). 107/107 v1
+  forecasts from 10 to 22 Oct had no research (137/183 over the season).
+- **Root cause of the missing research:** the IW `wip/free-sources` merge
+  (`4c911b2`, made locally on 11 Oct by a session that left no log) was never
+  pushed, so every shift kept checking out `adf3f72`. Lead re-ran IW gates on
+  it (python 243, Rust 101+15+1, fmt and clippy clean), confirmed the diff
+  holds no `prompt.txt` and that the contract change is additive (new
+  provider names; betomcat reads `provider` as text and does not pin the
+  provider list), and pushed on Hatim's go. Then IW `f583f24` (docs only).
+- **Budget (Hatim, lead's recommendation):** `DEFAULT_BUDGET_WINDOW_END`
+  2027-01-06, `DEFAULT_MINIBENCH_ROUND_BUDGET_USD` 15 (`92db283`). Credit
+  $69.64 of the key's $650 limit; with research ~$0.37 per question (2 runs)
+  the credit would last to about early December unpaced. Hatim asks Ben
+  Wilson about a renewal (email drafted by the lead).
+- **PR #2 (weekly model check of 19 Oct):** probes on the free key:
+  `nemotron-3.5-super-vl:free` ok; `minimax-m3.1-flash:free` retired on 22
+  Oct; `xing4.0-29b-a4b:free` 3/3 upstream 429s. The last two set
+  `enabled: false` on the PR branch (`e30cdc8`); merging stays with Hatim
+  (the auto-mode classifier refused a lead merge, consistent with s5.7).
+- **Pre-existing red test on `main`:**
+  `test_models_check.py::test_fixture_against_the_real_pool` fails since PR
+  #1 changed the real pool. Fixed with E1.
+- **Decided (Hatim):** a state summary by email, weekly plus immediate
+  alerts (model-check PR waiting, low credit, broken shift chain, round
+  scored); it replaces the 5.4 GitHub-issue digest. The dashboard follows
+  vezo3 and vezocontrol with model-by-model comparison, as a local app,
+  design later (impeccable). v2 data stored from now on: archive each
+  finished v2 run's raw log and its Metaculus forecasts and comments, parse
+  later. The IW visualization tool needs its own design (IW README). The
+  improvement-scout skill writes its memos to a gitignored directory.
+- **Build order (Hatim):** asknews budget tests, then 5.3 weights, E1, then
+  5.1 referee; one by one or in parallel, agents for mechanical work, usage
+  is the constraint.
+- **AskNews budget shipped** (`61d30ac`, squashed from `wip/asknews-budget`
+  plus tests). A Sonnet builder wrote 14 tests (cycle start incl. Dec->Jan,
+  cap edges, per-run recording, fallback params, 402 / both-fail /
+  over-budget paths) and killed 35/35 single-line mutations. Lead review
+  fixed two of its findings: `build_deps` never passed
+  `settings.asknews_monthly_calls` (the env override was dead), and
+  `test_research_falls_back_to_asknews_on_connect_error` passed only because
+  the fallback swallowed its handler's assertion on the new Google request.
+  Noted, not changed: the fallback's AskNews half is `latest news` (24 h
+  look-back) where the old one used `hours_back=720`; Google's `when:30d`
+  carries the month. Calls already spent since 22 Oct by the old code are
+  not in the new table, so this cycle's count starts low by about 20.
