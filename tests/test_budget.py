@@ -940,6 +940,7 @@ async def _restrict_with_mocks(
             funded_api_key="funded-key",
             http_client=http_client,
             metaculus_token=token,
+            round_budget_usd=50.0,
         )
         return await guard.restrict(pool, prompt_chars=100, ledger=ledger, now=now)
 
@@ -968,6 +969,7 @@ async def test_guard_round_window_start_is_inclusive_and_end_exclusive(
             http_client=http_client,
             metaculus_token="meta-token",
             cache=KeyStatusCache(ttl_seconds=0.0),
+            round_budget_usd=50.0,
         )
         httpx_mock.add_response(
             url=KEY_STATUS_URL,
@@ -1092,6 +1094,7 @@ async def test_guard_records_the_round_start_value_on_first_sight_only(
             http_client=http_client,
             metaculus_token="meta-token",
             cache=KeyStatusCache(ttl_seconds=0.0),
+            round_budget_usd=50.0,
         )
         first = await guard.restrict([_model("a"), _model("b")], 100, ledger, IN_ROUND)
         second = await guard.restrict([_model("a"), _model("b")], 100, ledger, IN_ROUND)

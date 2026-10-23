@@ -41,8 +41,8 @@ def test_load_settings_defaults(tmp_path: Path) -> None:
     assert settings.openrouter_api_key is None
     assert settings.openrouter_free_api_key is None
     assert settings.gemini_api_key is None
-    assert settings.budget_window_end == datetime(2026, 10, 19, tzinfo=UTC)
-    assert settings.minibench_round_budget_usd == pytest.approx(50.0)
+    assert settings.budget_window_end == datetime(2027, 1, 6, tzinfo=UTC)
+    assert settings.minibench_round_budget_usd == pytest.approx(15.0)
     assert settings.minibench_busy_days == 4
     assert settings.iw_url == "http://127.0.0.1:8080"
     assert settings.data_dir == Path("./data")
@@ -126,7 +126,7 @@ def test_load_settings_blank_minibench_env_vars_use_defaults(
 
     settings = load_settings(empty_env)
 
-    assert settings.minibench_round_budget_usd == pytest.approx(50.0)
+    assert settings.minibench_round_budget_usd == pytest.approx(15.0)
     assert settings.minibench_busy_days == 4
 
 

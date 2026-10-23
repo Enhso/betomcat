@@ -15,13 +15,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from forecasting_tools.helpers.metaculus_client import MetaculusClient
 
-# End of MiniBench round 2 (5-19 Oct; Hatim, 2026-09-25). Past this date the
-# guard allows the whole remaining credit in a single day, so move it before.
-DEFAULT_BUDGET_WINDOW_END = datetime(2026, 10, 19, tzinfo=UTC)
+# Last FE Fall forecasting day (Hatim, 2026-10-23). Past this date the guard
+# allows the whole remaining credit in a single day, so move it before.
+DEFAULT_BUDGET_WINDOW_END = datetime(2027, 1, 6, tzinfo=UTC)
 
 # While a MiniBench round is in its busy phase the budget guard paces against
-# this per-round allowance instead of the daily pro-rate (Hatim, 2026-09-30).
-DEFAULT_MINIBENCH_ROUND_BUDGET_USD = 50.0
+# this per-round allowance instead of the daily pro-rate (Hatim, 2026-09-30;
+# cut from $50 to $15 on 2026-10-23 to stretch the credit to 6 Jan).
+DEFAULT_MINIBENCH_ROUND_BUDGET_USD = 15.0
 DEFAULT_MINIBENCH_BUSY_DAYS = 4
 
 
