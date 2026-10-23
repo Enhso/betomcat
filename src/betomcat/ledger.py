@@ -698,3 +698,51 @@ class Ledger:
             "SELECT * FROM submissions WHERE run_id = ? ORDER BY id", (run_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- weekly summary reads ----------------------------------------------
+
+    def runs_by_status_since(self, start: str) -> dict[str, int]:
+        """Runs started at or after `start`, counted by status.
+
+        An unfinished run (no status yet) is counted as `unfinished`.
+        """
+        rows = self._conn.execute(
+            "SELECT COALESCE(status, 'unfinished'), COUNT(*) FROM runs "
+            "WHERE started_at >= ? GROUP BY 1",
+            (start,),
+        ).fetchall()
+        return {status: int(count) for status, count in rows}
+
+    def degraded_runs_since(self, start: str) -> int:
+        """Runs started at or after `start` whose research was degraded."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE started_at >= ? AND degraded = 1",
+            (start,),
+        ).fetchone()
+        return int(row[0])
+
+    def model_usage_since(self, start: str) -> list[dict[str, Any]]:
+        """Per-model draws, ok and total attempts and cost since `start`.
+
+        Draws count `draws.drawn_at`, attempts and cost count
+        `model_forecasts.started_at`; a model seen in either table is listed.
+        Rows are ordered by model id.
+        """
+        usage: dict[str, dict[str, Any]] = {}
+        for model_id, draws in self._conn.execute(
+            "SELECT model_id, COUNT(*) FROM draws WHERE drawn_at >= ? "
+            "GROUP BY model_id",
+            (start,),
+        ):
+            usage[model_id] = {"draws": int(draws), "ok": 0, "attempts": 0, "cost": 0.0}
+        for model_id, attempts, ok, cost in self._conn.execute(
+            "SELECT model_id, COUNT(*), SUM(status = 'ok'), "
+            "COALESCE(SUM(cost_usd), 0) FROM model_forecasts "
+            "WHERE started_at >= ? GROUP BY model_id",
+            (start,),
+        ):
+            row = usage.setdefault(
+                model_id, {"draws": 0, "ok": 0, "attempts": 0, "cost": 0.0}
+            )
+            row.update(attempts=int(attempts), ok=int(ok), cost=float(cost))
+        return [{"model_id": m, **usage[m]} for m in sorted(usage)]

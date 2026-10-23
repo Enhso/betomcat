@@ -1,0 +1,39 @@
+# Weekly state summary (`betomcat summary`): both bots' standings, vezo3's
+# ledger for the week, credit and its run-out date, pool commits and what is
+# waiting on the owner. Mailed through Resend; the repo and its logs are
+# public, so the code logs counts only and the mail is where details go.
+name: summary
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout betomcat
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync betomcat dependencies
+        run: uv sync
+
+      - name: Mail the weekly summary
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          V2_METACULUS_TOKEN: ${{ secrets.V2_METACULUS_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SUMMARY_TO: ${{ secrets.SUMMARY_TO }}
+        run: uv run betomcat summary

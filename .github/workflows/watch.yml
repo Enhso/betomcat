@@ -1,0 +1,39 @@
+# Hourly alerts (`betomcat watch`): a stalled shift chain (v1 or v2), a failed
+# host run, low credit, an open PR, a finalized MiniBench round. One mail lists
+# the alerts not sent before; the keys already sent live as an asset on the
+# draft release tagged `watch` (apart from the host's `state` release).
+name: watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 * * * *"
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout betomcat
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync betomcat dependencies
+        run: uv sync
+
+      - name: Mail new alerts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SUMMARY_TO: ${{ secrets.SUMMARY_TO }}
+        run: uv run betomcat watch

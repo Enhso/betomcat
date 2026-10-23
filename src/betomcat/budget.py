@@ -131,6 +131,7 @@ class KeyStatus:
     free_daily_requests_remaining: int | None = None
     byok_usage_daily: float | None = None
     include_byok_in_limit: bool | None = None
+    byok_usage_weekly: float | None = None
 
     @property
     def today_spend(self) -> float | None:
@@ -161,6 +162,7 @@ async def fetch_key_status(client: httpx.AsyncClient, api_key: str) -> KeyStatus
         limit_remaining = data.get("limit_remaining")
         usage_daily = data.get("usage_daily")
         byok_usage_daily = data.get("byok_usage_daily")
+        byok_usage_weekly = data.get("byok_usage_weekly")
         include_byok_in_limit = data.get("include_byok_in_limit")
         remaining = (data.get("free_model_daily_requests") or {}).get("remaining")
         return KeyStatus(
@@ -174,6 +176,9 @@ async def fetch_key_status(client: httpx.AsyncClient, api_key: str) -> KeyStatus
             ),
             include_byok_in_limit=(
                 None if include_byok_in_limit is None else bool(include_byok_in_limit)
+            ),
+            byok_usage_weekly=(
+                None if byok_usage_weekly is None else float(byok_usage_weekly)
             ),
         )
     except (TypeError, ValueError, AttributeError) as exc:

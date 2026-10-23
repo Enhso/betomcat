@@ -51,15 +51,22 @@ class GitHubReleases:
     """Thin async client for the subset of the Releases API state.py needs."""
 
     def __init__(
-        self, repo: str, token: str, client: httpx.AsyncClient | None = None
+        self,
+        repo: str,
+        token: str,
+        client: httpx.AsyncClient | None = None,
+        tag: str = RELEASE_TAG,
     ) -> None:
         """Args:
         repo: `"owner/name"`, e.g. `os.environ["GITHUB_REPOSITORY"]`.
         token: A token with `contents: write` on `repo`. Never logged.
         client: Optional pre-built `httpx.AsyncClient` (tests inject one).
             Must follow redirects for `download_asset` to work.
+        tag: The draft release this client works on (`watch.py` keeps its own
+            release, apart from the host's `state`).
         """
         self._repo = repo
+        self._tag = tag
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -73,11 +80,11 @@ class GitHubReleases:
             await self._client.aclose()
 
     async def get_or_create_release(self) -> tuple[int, list[ReleaseAsset]]:
-        """The `state` draft release's id and assets, creating it if absent.
+        """The tag's draft release id and assets, creating it if absent.
 
         A draft has no git tag until it is published, so `releases/tags/state`
         never finds one; the release list does (drafts are listed for tokens
-        with push access). If several `state` drafts exist, uploads go to the
+        with push access). If several drafts of the tag exist, uploads go to the
         oldest and the uploaded assets of all of them are returned, so restore
         and rotation see every snapshot.
         """
@@ -89,7 +96,7 @@ class GitHubReleases:
         )
         response.raise_for_status()
         matches = sorted(
-            (r for r in response.json() if r.get("tag_name") == RELEASE_TAG),
+            (r for r in response.json() if r.get("tag_name") == self._tag),
             key=lambda r: int(r["id"]),
         )
         if matches:
@@ -105,8 +112,8 @@ class GitHubReleases:
             f"{GITHUB_API}/repos/{self._repo}/releases",
             headers=self._headers,
             json={
-                "tag_name": RELEASE_TAG,
-                "name": RELEASE_TAG,
+                "tag_name": self._tag,
+                "name": self._tag,
                 "draft": True,
                 "prerelease": False,
             },

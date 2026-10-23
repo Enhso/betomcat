@@ -12,6 +12,9 @@ Subcommands:
                                            catalog and rewrite it in place.
     betomcat update-weights            -- score resolved questions and rewrite
                                            DATA_DIR/weights.json.
+    betomcat summary [--out FILE]      -- mail the weekly state summary, or write
+                                           its HTML to FILE for review.
+    betomcat watch                     -- mail alerts not sent before (hourly).
 """
 
 from __future__ import annotations
@@ -35,6 +38,8 @@ from betomcat.metaculus import MetaculusWrapper
 from betomcat.pipeline import PipelineDeps, run_pipeline
 from betomcat.referee import jev_client_from_env
 from betomcat.research import IWClient
+from betomcat.summary import run_summary
+from betomcat.watch import run_watch
 from betomcat.weights import update_weights
 
 logger = logging.getLogger(__name__)
@@ -246,6 +251,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "update-weights", help="score resolved questions and rewrite weights.json"
     )
 
+    summary_parser = subparsers.add_parser(
+        "summary", help="mail the weekly state summary"
+    )
+    summary_parser.add_argument("--out", type=Path, default=None)
+
+    subparsers.add_parser("watch", help="mail alerts not sent before")
+
     return parser.parse_args(argv)
 
 
@@ -274,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
         _cmd_check_models(args.pool, args.body_out)
     elif args.command == "update-weights":
         asyncio.run(_cmd_update_weights(settings))
+    elif args.command == "summary":
+        asyncio.run(run_summary(settings, args.out))
+    elif args.command == "watch":
+        asyncio.run(run_watch(settings))
     return 0
 
 

@@ -93,6 +93,10 @@ class Settings:
             its busy phase.
         asknews_monthly_calls: AskNews calls this bot may spend per cycle; once
             a research would exceed it, AskNews is left out of that research.
+        v2_metaculus_token: Metaculus token of the control bot (vezocontrol);
+            `betomcat summary` and `watch` read its forecasts with it.
+        resend_api_key: Send-only Resend key for the summary and alert mails.
+        summary_to: Recipient of the summary and alert mails.
     """
 
     metaculus_token: str | None
@@ -119,6 +123,9 @@ class Settings:
     minibench_round_budget_usd: float = DEFAULT_MINIBENCH_ROUND_BUDGET_USD
     minibench_busy_days: int = DEFAULT_MINIBENCH_BUSY_DAYS
     asknews_monthly_calls: int = ASKNEWS_MONTHLY_CALLS
+    v2_metaculus_token: str | None = None
+    resend_api_key: str | None = None
+    summary_to: str | None = None
 
 
 def load_settings(env_path: Path | str | None = None) -> Settings:
@@ -152,4 +159,7 @@ def load_settings(env_path: Path | str | None = None) -> Settings:
             "MINIBENCH_BUSY_DAYS", DEFAULT_MINIBENCH_BUSY_DAYS
         ),
         asknews_monthly_calls=_int_env("ASKNEWS_MONTHLY_CALLS", ASKNEWS_MONTHLY_CALLS),
+        v2_metaculus_token=os.environ.get("V2_METACULUS_TOKEN") or None,
+        resend_api_key=os.environ.get("RESEND_API_KEY") or None,
+        summary_to=os.environ.get("SUMMARY_TO") or None,
     )
