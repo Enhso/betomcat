@@ -313,3 +313,14 @@ models:
     price_out: 0
     context_tokens: 262144
     notes: "Added by the weekly model check on 2026-10-19 (released 2026-10-16); not probed yet. Disabled 2026-10-23 after a probe: 3/3 upstream 429s."
+
+  - id: recursive/flint-v1.0:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 262144
+    notes: "Added by the weekly model check on 2026-10-26 (released 2026-10-21); not probed yet."
