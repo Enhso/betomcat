@@ -7,6 +7,8 @@ In this project are 2 files:
 - **main.py**: Our recommended template option that uses the [forecasting-tools](https://github.com/Metaculus/forecasting-tools) package to handle a lot of stuff in the background for you (such as API calls). We will update the package, thus allowing you to gain new features with minimal changes to your code.
 - **main_with_no_framework.py**: A copy of main.py but implemented with minimal dependencies. Useful if you want a more custom approach.
 
+> **Want a stronger starting point than this template?** This repo is deliberately simple. Several community bots that have out-performed it in past tournaments are open source, and you can fork one of those instead. See the **[Open Source Bots](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#open-source-bots)** section of the resources page — each entry links to the bot's repo and shows where it placed. The setup below (API keys, GitHub Actions) largely carries over since most of them are built on this template or the same `forecasting-tools` package.
+
 
 Join the conversation about bot creation, get support, and follow updates on the [Metaculus Discord](https://discord.com/invite/NJgCC2nDfh) 'build a forecasting bot' channel.
 
@@ -21,15 +23,24 @@ If you run into trouble, reach out to `ben [at] metaculus [.com]`
 ## Quick start -> Fork and use Github Actions
 The easiest way to use this repo is to fork it, paste in two API keys, and click "Run workflow". After that, the bot will keep forecasting on new questions automatically every 20 minutes — no local setup needed.
 
-1) **Fork the repository** — go to the [repository](https://github.com/Metaculus/metac-bot-template) and click **Fork** in the top right.
-2) **Add your two API keys as repository secrets** — in your fork, go to `Settings → Secrets and variables → Actions → New repository secret`. Add these two (names must match exactly, all caps):
+1) **Fork the repository**: go to the [repository](https://github.com/Metaculus/metac-bot-template) and click **Fork** in the top right.
+2) **Add your two API keys as repository secrets**: in your fork, go to `Settings → Secrets and variables → Actions → New repository secret`. Add these two (names must match exactly, all caps):
    - **`METACULUS_TOKEN`** — create one at https://www.metaculus.com/futureeval/participate/ (see the [resources page](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#creating-your-bot-account-and-metaculus-token) if you get stuck).
    - **`OPENROUTER_API_KEY`** — get free credits via [this form](https://forms.gle/aQdYMq9Pisrf1v7d8), or make your own key on [OpenRouter](https://openrouter.ai/). You can also use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `ASKNEWS_SECRET`, etc. — these all work out of the box if you set them.
-3) **Enable Actions** — click the `Actions` tab, then click `I understand my workflows, go ahead and enable them`.
-4) **Run the test workflow to confirm everything works** — go to `Actions → Test Bot → Run workflow → Run workflow` (green button). This forecasts on whatever's currently open in the [bot-testing-area tournament](https://www.metaculus.com/tournament/bot-testing-area/) so you can verify your setup posts forecasts to Metaculus end-to-end. Once the run finishes (~3–5 min), check your bot's profile on Metaculus to confirm the forecasts landed.
-5) **You're done!** The `Forecast on new AI tournament questions` workflow is already enabled and will run every 20 minutes, picking up any new tournament questions and skipping ones it has already forecast on.
+3) **Enable Actions**: click the `Actions` tab, then click `I understand my workflows, go ahead and enable them`.
+4) **Run the test workflow to confirm everything works**: go to `Actions → Test Bot → Run workflow → Run workflow` (green button). This forecasts on whatever's currently open in the [bot-testing-area tournament](https://www.metaculus.com/tournament/bot-testing-area/) so you can verify your setup posts forecasts to Metaculus end-to-end. Once the run finishes (~3–5 min), [switch to your bot account](#seeing-your-bots-forecasts) on Metaculus to check that the forecasts landed. They won't show up on your human account.
+5) **You're done! (and participation form)**: The `Forecast on new AI tournament questions` workflow is already enabled and will run every 20 minutes, picking up any new tournament questions and skipping ones it has already forecast on. Before you start submitting forecasts, all participants are required to fill out the first section of our [participation](https://forms.gle/aQdYMq9Pisrf1v7d8) form. There are only 3 required questions, so it should be pretty quick. This form is used to help us learn about the demographics and motivations of our community in FutureEval, amplify individual projects/research, and also to collect applications for LLM credits.
 
 To pause your bot, go to `Actions → Forecast on new AI tournament questions → ... (top right) → Disable workflow`.
+
+### Seeing your bot's forecasts
+Your bot's forecasts belong to the bot account, so they won't show up under your own predictions. To see them:
+1. Log in to Metaculus with your human account.
+2. Click your username (top right) and go to `Settings → My Forecasting Bots`.
+3. Click `Switch to bot account` next to your bot.
+4. Open a question your bot forecasted on. The end of each run's log (in GitHub Actions or your terminal) links to every question it forecasted. The bot's forecast is on the graph, and its reasoning is in the `Private` comments tab.
+
+See the [resources page](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#how-to-view-your-bots-comments-and-forecasts) for more details.
 
 ### Testing your changes against the GitHub Actions workflow
 You can run any workflow against any branch — no need to merge to `main` first, and no need to fork if you have push access to this repo.
@@ -44,15 +55,15 @@ The runner checks out your branch and uses the repo's existing secrets — those
 Instructions for getting your METACULUS_TOKEN, OPENROUTER_API_KEY, or optional search provider API keys (AskNews, Exa, Perplexity, etc) are listed on the "Getting Started" section of the [resources](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#want-to-join-the-ai-forecasting-benchmark) page.
 
 ## Changing the Github automation
-To run a different script under the same workflows, edit the `poetry run python main.py` line in the appropriate file under `.github/workflows/` and replace `main.py` with your script. The workflows that exist:
+To run a different script under the same workflows, edit the `uv run python main.py` line in the appropriate file under `.github/workflows/` and replace `main.py` with your script. The workflows that exist:
 - `test_bot.yaml` — manual-trigger smoke test against the bot-testing-area tournament.
 - `run_bot_on_tournament.yaml` — every 20 min on the live AIB tournament + MiniBench.
 - `run_bot_on_metaculus_cup.yaml` — every 2 days on the Metaculus Cup.
 
-**To run `main_with_no_framework.py` via GitHub Actions instead of `main.py`:** open the workflow file you want and change `poetry run python main.py` to `poetry run python main_with_no_framework.py`. That's the only change required.
+**To run `main_with_no_framework.py` via GitHub Actions instead of `main.py`:** open the workflow file you want and change `uv run python main.py` to `uv run python main_with_no_framework.py`. That's the only change required.
 
 ## Editing in GitHub UI
-Remember that you can edit a bot non locally by clicking on a file in Github, and then clicking the 'Edit this file' button. Whether you develop locally or not, when making edits, attempt to do things that you think others have not tried, as this will help further innovation in the field more than doing something that has already been done. Feel free to ask about what has or has not been tried in the Discord, see [other bot's self-descriptions](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#what-are-other-bots-doing), or read bot's [open source code](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#open-source-bots).
+Remember that you can edit a bot non locally by clicking on a file in Github, and then clicking the 'Edit this file' button. Whether you develop locally or not, when making edits, attempt to do things that you think others have not tried, as this will help further innovation in the field more than doing something that has already been done. Feel free to ask about what has or has not been tried in the Discord, see [other bot's self-descriptions](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#what-are-other-bots-doing), or read bot's [open source code](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#open-source-bots). Remember you don't have to build on this template at all — forking one of the higher-ranked [open source bots](https://www.metaculus.com/notebooks/38928/ai-benchmark-resources/#open-source-bots) is a perfectly good way to start.
 
 ## Run/Edit the bot locally
 Local development is optional — most new users can run the bot entirely from GitHub Actions (see [Quick start](#quick-start--fork-and-use-github-actions)). Set up locally only if you want faster iteration on your prompts/code.
@@ -64,27 +75,22 @@ cd metac-bot-template
 ```
 If you've already forked the repo, replace the URL with your fork's URL (copy it from your fork's page in the browser).
 
-### 2. Install Python 3.11+ and Poetry
-You need:
-- **Python 3.11 or newer** — get it from [python.org](https://www.python.org/downloads/) (or your OS package manager / `pyenv` / whatever you prefer).
-- **Poetry** — see Poetry's [install docs](https://python-poetry.org/docs/#installation). The `pipx install poetry` route works on macOS, Linux, and Windows.
+### 2. Install uv
+This project uses [uv](https://docs.astral.sh/uv/) to manage Python and dependencies. Install it with uv's [install docs](https://docs.astral.sh/uv/getting-started/installation/) (works on macOS, Linux, and Windows).
 
-Confirm both are on your `PATH`:
+Confirm it is on your `PATH`:
 ```bash
-python --version    # 3.11.x or higher
-poetry --version
+uv --version
 ```
 
-(Optional, recommended) Keep the virtualenv inside the project directory so your editor picks it up automatically:
-```bash
-poetry config virtualenvs.in-project true
-```
+You don't need to install Python separately: if you don't have Python 3.11, 3.12 or 3.13, uv downloads one in the next step. Python 3.14 isn't supported yet because `forecasting-tools` relies on `nest_asyncio`, which breaks on 3.14.
 
 ### 3. Install dependencies
 From inside the cloned repository:
 ```bash
-poetry install
+uv sync
 ```
+This creates a virtualenv in `.venv` inside the project, so most editors pick it up automatically.
 
 ### 4. Set your API keys
 Copy the template and fill in your real keys:
@@ -96,28 +102,28 @@ Then open `.env` in any text editor and replace each `REPLACE_ME` with your real
 ### 5. Run the bot
 **First run — smoke-test against the [bot-testing-area tournament](https://www.metaculus.com/tournament/bot-testing-area/):**
 ```bash
-poetry run python main.py --mode test_questions
+uv run python main.py --mode test_questions
 ```
-You'll see a one-line startup banner, forecasting progress logs, then a `🎉 Bot submitted N forecast(s)` banner with direct links to each forecast on Metaculus.
+You'll see a one-line startup banner, forecasting progress logs, then a `🎉 Bot submitted N forecast(s)` banner with direct links to each forecast on Metaculus. To see the bot's forecast on those pages, [switch to your bot account](#seeing-your-bots-forecasts).
 
 **Forecast on live AIB tournament + MiniBench:**
 ```bash
-poetry run python main.py --mode tournament
+uv run python main.py --mode tournament
 ```
 
 **Forecast on the Metaculus Cup:**
 ```bash
-poetry run python main.py --mode metaculus_cup
+uv run python main.py --mode metaculus_cup
 ```
 
 **Run the no-framework reference implementation instead:**
 ```bash
-poetry run python main_with_no_framework.py
+uv run python main_with_no_framework.py
 ```
 This file has no `--mode` flag; it's controlled by the constants at the top of the file (`SUBMIT_PREDICTION`, `USE_EXAMPLE_QUESTIONS`, `TOURNAMENT_ID`, etc.). Flip `USE_EXAMPLE_QUESTIONS = True` to point it at the bot-testing-area tournament instead of the live AIB.
 
 To stop publishing forecasts (dry-run mode):
-- `main.py`: set `publish_reports_to_metaculus=False` in the `SummerTemplateBot2026(...)` constructor near the bottom.
+- `main.py`: set `publish_reports_to_metaculus=False` in the `FallTemplateBot2026(...)` constructor near the bottom.
 - `main_with_no_framework.py`: set `SUBMIT_PREDICTION = False` at the top.
 
 ## Reviewing how your bot did
@@ -127,8 +133,7 @@ Once your questions start resolving, the community-member-maintained optional
 helps to diagnose any reasoning errors.
 
 ```bash
-poetry install --with integrations
-poetry run bot-review review --resolved-since 30
+uv run --group integrations bot-review review --resolved-since 30
 ```
 
 A weekly workflow and a Claude Code skill come with it. See the
