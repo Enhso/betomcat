@@ -6,7 +6,8 @@ evidence says, updated every lead session), `docs/BUILD_LOG.md` (full trace,
 every decision and why; 2026-10-23 is the newest entry), `docs/contracts.md`
 (IW <-> bot interfaces), `docs/spec.md` and `docs/brief.md` (intent).
 Sections 1-10 are from 2026-09-30 and still hold except where s0 or a status
-line says otherwise.
+line says otherwise. 2026-11-10: upstream template sync merged on a local
+branch, adaptations still to build. See s5.9.
 
 ## 0. Session 2026-10-23: state and next steps
 
@@ -609,6 +610,100 @@ Decisions in BUILD_LOG 2026-10-09: weekly, pull request, candidate rule. The not
   (GDELT search under strain during a migration). Web ngrams TOC files could
   back a 48 h title index (~150 MB download per shift). Numbers and options:
   BUILD_LOG 2026-10-09. Hatim will look closer; retry the DOC API first.
+
+### 5.9 Upstream template sync (2026-11-10): merge done, adaptations not built
+
+Upstream `Metaculus/metac-bot-template` is now the `upstream` remote. It has
+10 new commits past our fork point: `6dab04c..bcbd016`.
+
+**Done.** The local branch `sync/upstream-bcbd016` (not pushed) holds the
+merge commit `392b966`.
+
+- Upstream's template files come in as-is: `main.py`, `bot_helpers.py`,
+  `main_with_no_framework.py`, README, `integrations/` and the review-bot
+  skill.
+- betomcat keeps its own `pyproject.toml` and `uv.lock`.
+- The template workflows stay deleted.
+- `.gitignore` gains `temp/`.
+
+No betomcat code changed. The bot doesn't run the template files, and CI
+(`src`, `tests`) doesn't check them. Hatim decides whether to merge the branch
+to main or drop it. Once it lands, the next sync starts from
+`git fetch upstream && git log HEAD..upstream/main`.
+
+**What upstream changed and whether it applies here**
+
+| Upstream | Applies? |
+|---|---|
+| #121/#122/#123/#126: Poetry to uv, lock upgraded under a 7-day `exclude-newer` cooldown (forecasting-tools exempt), Python `<3.14` | Already on uv with `<3.13`. Only the cooldown is new, and it's optional (item 5). |
+| #120: forecasting-tools 0.3.4 so tournament mode targets Fall 2026 | Not for targeting: 0.3.1 already points at FE Fall 2026 (33121) and `minibench` (BUILD_LOG s0). Diff the APIs before any bump (item 0). |
+| #124: fail at startup when no LLM key is set (the Metaculus LLM proxy is gone) | betomcat never used the proxy. When `OPENROUTER_API_KEY` is unset, `cli.build_deps` passes `""` and every question fails inside the retry ladder. Adapt it (item 3). |
+| #117: parser instructions. Return one final distribution, never merge lists. Use only the `group_question_option` subquestion. Refuse to parse when the text treats the question as already resolved. | The first two apply (items 1 and 2). The resolved-question guard has no counterpart here because betomcat has no LLM parser. Skip it unless the ledger shows models calling open questions resolved. |
+| #117: AskNews news-summaries researcher gets the bare question text | Nothing to do: `pipeline.py:244` already passes `question.question_text`. |
+| #114/#115/#116: README, review_bot workflow | n/a (workflows deleted). |
+
+vezocontrol (v2) has its own `OPENROUTER_API_KEY` secret, and its shifts
+succeed through 2026-11-10, so the proxy removal doesn't touch it. It has not
+been synced: changing the control mid-tournament changes the baseline, and
+that is Hatim's call.
+
+**To build, in order.** Put each item on a branch with a verifier. Every item
+must pass `uv run ruff check src tests`, `uv run ruff format --check src tests`,
+`uv run mypy src` and `uv run pytest -q`. host dispatches shifts on `main`, so
+nothing goes to `main` without Hatim. Planned team: one sonnet researcher for
+item 0, then one sonnet builder in a worktree for items 1-4, then one sonnet
+verifier.
+
+0. **forecasting-tools diff first.** Compare 0.3.1 against 0.3.5 (passes the
+   cooldown) and 0.3.6 (released 2026-11-08) on what betomcat uses:
+   - `PredictionExtractor.extract_last_percentage_value`,
+     `extract_option_list_with_percentage_afterwards`,
+     `extract_numeric_distribution_from_list_of_percentile_number_and_probability`,
+     and the private `_normalize_option_probabilities` and
+     `_get_percentile_lines`
+   - `NumericDistribution.from_question`
+   - `MetaculusClient.CURRENT_AI_COMPETITION_ID` and `CURRENT_MINIBENCH_ID`.
+     These matter most: `Settings.tournaments` defaults to them, so a changed
+     constant retargets the live bot.
+
+   Also check whether `metaculus-bot-review` and `lightningrod-ai` co-resolve
+   with our dependencies. The researcher was started on 2026-11-10 and stopped
+   before it had results. If the SDK has fixed percentile collection, the bump
+   replaces item 1.
+1. **Numeric and date parsing: the final block wins.** In 0.3.1,
+   `_get_percentile_lines` collects every `Percentile N:` line in the response.
+   Step 7 of `prompts/numeric.md` invites the model to draft a distribution
+   before the answer block, so the draft and the final block get collected
+   together.
+   - First, write a test that shows which happens today: `from_question`
+     raises (a retry, so wasted spend) or returns a wrong CDF.
+   - Fix it in `forecast.forecast_numeric`, the way `_parse_option_lines` fixed
+     MC: parse only the **last contiguous run** of percentile lines. Don't use
+     the last line per percentile, because that can splice a partial final
+     block onto a full draft.
+   - Add a property test: any draft followed by a full final block parses to
+     the final block. List it in a new `tests/PROPERTIES.md`.
+   - `hypothesis` is not a dev dependency yet.
+   - Use synthetic numbers only, because the repo is public.
+2. **Group subquestions.** `pipeline.py:282` sets
+   `title=question.question_text`. Check whether a group subquestion's text
+   names its `group_question_option`. If it doesn't, add the option to the
+   prompt so the model forecasts that subquestion only.
+3. **Fail fast without `OPENROUTER_API_KEY`.** Make startup refuse when the key
+   is missing. First check what `dry_run` needs.
+4. **review-bot skill.** After the merge, the skill runs
+   `uv run --group integrations bot-review`, but our `pyproject.toml` has no
+   `integrations` group. There are two fixes:
+   - Re-add the group (`metaculus-bot-review`, `lightningrod-ai`). This keeps
+     the text identical to upstream and makes future merges cleaner.
+   - Point the skill at `uvx --from metaculus-bot-review bot-review`.
+
+   Either way, `show --section research` and `--forecaster` expect the
+   template's comment layout, which betomcat's comments don't follow. Expect
+   only the score table to work.
+5. **Optional: the `exclude-newer = "7 days"` cooldown.** Adopt it only if both
+   the local uv (0.10.0) and the `setup-uv` version in `ci.yml` accept relative
+   durations.
 
 ## 6. Decisions pending with Hatim
 
