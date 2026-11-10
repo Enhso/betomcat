@@ -261,19 +261,27 @@ class IWClient:
         (spooled by `_direct_fallback`) back into IW once it is reachable
         again. Only the fields IW's contract documents are sent; local
         bookkeeping fields (e.g. `content_hash`) are dropped -- IW computes
-        its own ids and hashes.
+        its own ids and hashes. Documents without a `url` are skipped, since
+        IW rejects the whole batch (422) if any one of them has none.
         """
+        sendable = [doc for doc in documents if doc["url"].strip()]
+        if len(sendable) < len(documents):
+            logger.warning(
+                "skipped %d document(s) without a url",
+                len(documents) - len(sendable),
+            )
         payload = {
             "documents": [
                 {
                     "url": doc["url"],
                     "title": doc["title"],
                     "provider": doc["provider"],
-                    "published": doc.get("published"),
+                    # IW types this as a string: null is a 422, "" means unknown.
+                    "published": doc.get("published") or "",
                     "fetched_at": doc["fetched_at"],
                     "content": doc["content"],
                 }
-                for doc in documents
+                for doc in sendable
             ]
         }
         response = await self._client.post(

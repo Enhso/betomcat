@@ -12,10 +12,11 @@ from pytest_httpx import HTTPXMock
 
 from betomcat import weights as weights_module
 from betomcat.budget import BudgetGuard
-from betomcat.cli import build_deps, main
+from betomcat.cli import build_deps, main, replay_outbox
 from betomcat.config import Settings
 from betomcat.ledger import Ledger
 from betomcat.pool import load_weights
+from betomcat.research import IWClient
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -161,3 +162,30 @@ def test_update_weights_command_scores_the_ledger_and_writes_weights_json(
     assert written["n_resolved"] == {"model-a": 1, "model-b": 1}
     assert load_weights(data_dir) == {"model-a": 1.0, "model-b": 1.0}  # below 10
     assert written["updated_at"][:10] == datetime.now(UTC).date().isoformat()
+
+
+async def test_replay_outbox_keeps_a_rejected_file_and_continues(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """One file IW rejects must not stop the shift or lose the file."""
+    outbox = tmp_path / "outbox"
+    outbox.mkdir()
+    line = {
+        "url": "https://a.test",
+        "title": "t",
+        "provider": "asknews_news",
+        "published": "2026-11-02T04:19:16Z",
+        "fetched_at": "2026-11-02T19:00:00Z",
+        "content": "c",
+    }
+    (outbox / "2026-11-01.jsonl").write_bytes(orjson.dumps(line) + b"\n")
+    (outbox / "2026-11-02.jsonl").write_bytes(orjson.dumps(line) + b"\n")
+    httpx_mock.add_response(url="http://iw.test/api/documents", status_code=422)
+    httpx_mock.add_response(url="http://iw.test/api/documents", json={"ingested": 1})
+    iw = IWClient("http://iw.test", None, tmp_path)
+
+    total = await replay_outbox(iw, tmp_path)
+
+    assert total == 1
+    assert (outbox / "2026-11-01.jsonl").exists()
+    assert (outbox / "replayed" / "2026-11-02.jsonl").exists()

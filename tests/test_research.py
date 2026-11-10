@@ -520,3 +520,32 @@ def test_render_claims_text_empty() -> None:
 
 def test_render_history_text_empty() -> None:
     assert render_history_text([]) == "(none)"
+
+
+async def test_ingest_documents_sends_iw_valid_payload(
+    httpx_mock: HTTPXMock, tmp_path: Path
+) -> None:
+    """A null `published` or a blank `url` makes IW reject the whole batch (422)."""
+    httpx_mock.add_response(url=f"{IW_URL}/api/documents", json={"ingested": 2})
+    spooled = {
+        "title": "t",
+        "provider": "google_news",
+        "fetched_at": "2026-11-02T19:00:00Z",
+        "content": "c",
+        "content_hash": "h",
+    }
+    documents = [
+        {**spooled, "url": "https://news.google.com/rss", "published": None},
+        {**spooled, "url": "https://a.test", "published": "2026-11-02T04:19:16Z"},
+        {**spooled, "url": " ", "published": "2026-11-02T04:19:16Z"},
+    ]
+
+    ingested = await _client(tmp_path).ingest_documents(documents)
+
+    sent = orjson.loads(httpx_mock.get_request().content)["documents"]
+    assert ingested == 2
+    assert [doc["url"] for doc in sent] == [
+        "https://news.google.com/rss",
+        "https://a.test",
+    ]
+    assert [doc["published"] for doc in sent] == ["", "2026-11-02T04:19:16Z"]

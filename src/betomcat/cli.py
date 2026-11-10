@@ -23,6 +23,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import orjson
 
 from betomcat.budget import BudgetGuard
@@ -123,7 +124,9 @@ async def replay_outbox(iw: IWClient, data_dir: Path) -> int:
     """Replay spooled degraded-mode fetches in `data_dir/outbox` into IW.
 
     Shared by the `replay-outbox` subcommand and `betomcat host`, which
-    replays the outbox once at the start of every shift.
+    replays the outbox once at the start of every shift. A file IW rejects
+    is logged and left in place for the next replay, so it cannot stop the
+    shift from forecasting.
 
     Returns:
         Total number of documents ingested.
@@ -139,7 +142,11 @@ async def replay_outbox(iw: IWClient, data_dir: Path) -> int:
         documents = [orjson.loads(line) for line in lines]
         if not documents:
             continue
-        ingested = await iw.ingest_documents(documents)
+        try:
+            ingested = await iw.ingest_documents(documents)
+        except httpx.HTTPError as exc:
+            logger.error("outbox replay of %s failed, file kept: %s", path.name, exc)
+            continue
         total += ingested
         replayed_dir.mkdir(parents=True, exist_ok=True)
         path.rename(replayed_dir / path.name)
