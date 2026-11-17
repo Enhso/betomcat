@@ -9,7 +9,7 @@ what was known when.
 This repository is public. Nothing here may contain a forecast, rationale or
 claim for a question that is still open.
 
-Last updated: 2026-10-23.
+Last updated: 2026-11-17.
 
 ## 1. What betomcat is
 
@@ -123,6 +123,171 @@ tournament.
 
 ## 3. What the evidence says
 
+### 2026-11-17 (FE Fall standing; the 23 Oct deployments in live shifts)
+
+**Scope.** Two new measurements. The ledger snapshot of 17 Nov covers every
+shift since 23 Oct. Metaculus's FE Fall leaderboard (project 33121) was
+read on 17 Nov with the `metaculus-bot-review` tool. Sections 1-2 stand: no
+design changed. A forecasting-tools bump and a startup key check are built
+on a branch and are not yet live.
+
+**The 23 Oct deployments work.** Research is back. In the week of 19 Oct,
+71 of 83 runs were degraded; since 24 Oct, 2 of 140 are. Every run since
+24 Oct ended with two successful models. The referee examined 22 runs and
+re-researched 2. Model weights update daily. Of 353 model calls since
+24 Oct, 49 failed, nearly all on free models that were unavailable or
+returned empty replies; one failed to parse.
+
+**FE Fall standing.** betomcat ranks 360 of 490 with a spot peer score of
+-811.9, on 32 scored questions out of 122 forecast. Among the 214 bots with
+coverage of 28 or more it ranks 197th. Metaculus's reference bots run the
+same models betomcat draws, each alone with AskNews research, and score far
+higher: Claude Sonnet 5.5 +475.6, Claude Opus 5.5 +445.4, Claude Fable 5.1
++586.5. The field median is +47.6.
+
+**Where the points went.** By question type (questions, summed spot peer
+score): numeric 5, -336.6; discrete 10, -192.0; binary 13, -136.1; multiple
+choice 4, -147.3. The four worst questions are numeric or discrete and score
+-167, -143, -117 and -117. Each has a baseline score of exactly -106.5.
+Metaculus marks three as resolved outside the question's range. The fourth
+resolved at $109.9M, just under the roughly $110M lower bound the models
+cite. So it is likely out of range as well, though its bounds were not
+fetched.
+
+**Mechanism (verified by arithmetic, not yet by backtest).** The numeric
+prompt asks for the 1st to 99th percentiles. Models keep the 99th inside an
+open bound. forecasting-tools then places the bound at the 99.5th percentile
+and, after its minimum-mass adjustment, leaves 0.594% of probability beyond
+each open bound. The submitted distributions show exactly that. 50 x
+ln(0.00594 / 0.05) = -106.5. Asking for the 10th to 90th percentiles, as the
+template does, leaves about 5% beyond the bound. There an out-of-range
+outcome scores about 0.
+
+**What it changes for the argument.** The gap to the reference bots is too
+large to blame on missing Workbench research. Part of it is a mechanical
+property of how betomcat states numeric distributions. A backtest on all
+resolved numeric questions in the ledger comes next, comparing tail
+variants without new model calls. Until it runs, the size of the effect is
+an estimate. A second pattern is noted, not tested. All 13 scored binary
+forecasts lie between 0.095 and 0.594, and the losses fall where the field
+was confident and right.
+
+### 2026-11-10 (upstream template sync; no new live measurements)
+
+**Scope.** The forked template (`Metaculus/metac-bot-template`) published 10
+commits after our fork point. They are merged on a local branch. betomcat's
+own code, prompts and design are unchanged, so sections 1-2 stand. No ledger
+or Metaculus results were fetched.
+
+**Recorded evidence.** The control's Actions run list on 10 Nov shows its
+shifts still running. Of its last four finished shifts, three succeeded and
+one was cancelled (10 Nov, 03:39 UTC start). The control holds its own
+OpenRouter key, so upstream's removal of the Metaculus LLM proxy does not
+touch the baseline.
+
+**What it changes for the argument.** One upstream fix names a failure mode
+betomcat shares. The SDK's numeric parser collects every percentile line in a
+response. If a model writes a draft distribution before its final answer, the
+parser reads the draft and the final answer together. We have not measured
+whether this caused parse retries or wrong distributions on live questions.
+The next step is a ledger count of numeric parse failures and a regression
+test (HANDOFF s5.9).
+
+### 2026-11-08 (evaluation proposal; experiments not run)
+
+**Scope and existing evidence.** This is an experimental-design review, not
+an accuracy result or a production change. No new live data were fetched.
+The 23 Oct ledger review counted 183 submissions, 137 without research;
+shift logs for 19-23 Oct showed successor starts within a minute. The
+recorded finalized MiniBench round-2 ranks were 49/306 for betomcat and
+186/306 for the control, which covered 32/57 scored questions. These are
+historical figures, not current measurements or matched experimental arms.
+
+**Workbench test.** Generate paired, prospective forecasts with the same
+models, frozen weights, forecasting instructions and deadlines: direct
+research versus IW-structured evidence. Use the same fetched documents to
+isolate structuring; add a question-only sanity baseline and an IW-without-
+family-history ablation when budget permits. If retrieval differs too,
+label the comparison end-to-end rather than attributing it to structuring.
+
+**Loop test.** Freeze the first-round two-model ensemble and determine
+eligibility before branching. Compare keeping that forecast with the
+current targeted-research policy. Controls that reforecast on unchanged
+evidence, and on a generic refresh with a matched research budget, separate
+the value of research from another model call and targeted search from
+ordinary fresh information. Keep the diagnosis shared across reforecast
+controls. Count failed or late reruns with the policy's actual fallback;
+do not analyze only successful reruns or compare triggered questions with
+untriggered ones.
+
+**Leakage controls.** Prefer automated forecasts saved before outcomes are
+known. Archive the question state, rendered prompts, full evidence snapshots,
+model/configuration versions and stage cutoffs. Freeze all retrieval and
+history as of the relevant stage; later stages may use newly fetched
+information only before their deadline. Isolate experimental writes from
+other arms and production. Historical document timestamps do not remove
+outcome knowledge from a newer model's training. Tune on earlier periods,
+then freeze the protocol for a later holdout; only resolutions already
+available may inform weights or retrieved outcome history.
+
+**Evaluation.** Predeclare paired improvement under the exact tournament
+scoring rule as the primary competitive comparison. Use log loss, binary/
+categorical Brier score and numeric/date CRPS as appropriate diagnostics;
+report calibration, coverage, deadline success and full incremental cost.
+Estimate uncertainty over independent questions/events, clustering related
+families rather than treating model calls as independent samples. Keep
+pending and annulled outcomes accounted for. Do not use leaderboard rank,
+reduced disagreement or the weight learner's clipped scores as the primary
+accuracy test. Set the minimum worthwhile gain and stopping rule before the
+holdout, and distinguish an inconclusive interval from evidence of no gain.
+
+**Instrumentation needed.** The ledger retains both rounds, but its
+last-successful-model scoring view loses stage distinctions. Evaluation
+needs explicit arm/stage identities, forecast lineage, immutable question
+and prompt inputs, and both initial and refreshed research snapshots;
+`runs.dossier_id` currently retains the initial dossier after a rerun.
+These changes and the experiments above are proposed, not implemented.
+
+### 2026-11-08 (failure-hypothesis review; no new live measurements)
+
+**Scope.** Source and documentation review only. No code or design changed;
+no live ledger, shift logs or Metaculus results were fetched. The numbers
+below come from the earlier dated entries, not a check of today's system.
+
+**Recorded evidence.** The 23 Oct ledger review reported 183 submissions,
+137 without research. Shift logs for 19-23 Oct showed each successor
+starting within a minute of the previous shift ending. Metaculus's finalized
+MiniBench round-2 result was rank 49 of 306, peer score 272, with a rank
+interval of 14-109; the control ranked 186 and covered 32 of 57 scored
+questions. The 9 Oct family count was 68 families for 75 questions, with
+only 7 families containing more than one question.
+
+**Candidates to test, not findings of forecast error.**
+
+1. Claim support measures what excerpts say, not whether a claim is true or
+   useful for predicting the resolution. Extraction may remove qualifications,
+   and repeated reporting may look like independent corroboration. Compare
+   structured claims with their underlying documents using the same models
+   and archived evidence cutoff.
+2. Both forecasters read the same prompt and research. Shared mistakes can
+   produce agreement and bypass the disagreement-triggered referee. Audit
+   agreed-but-wrong resolved forecasts as well as disagreements, and measure
+   whether the ensemble improves on its individual members.
+3. Weights become performance-based after 10 scored questions per model.
+   A small or topic-concentrated sample may reward luck rather than durable
+   skill. Compare adaptive and uniform policies on subsequent questions,
+   respecting when resolutions became available and grouping related
+   questions when estimating uncertainty.
+4. Beating the control tests the bundled system, not the Workbench alone:
+   models and coverage differ too. A matched research ablation is needed to
+   attribute any gain to the Workbench; report coverage separately.
+5. The archive may not compound if families fragment or questions rarely
+   recur. Check family assignments on resolved questions and measure useful
+   retrieval and forecast improvement, not merely stored-document counts.
+
+These tests were proposed, not run. The review does not establish whether
+research recovery or the 23 Oct deployments worked in later live shifts.
+
 ### 2026-10-23 (covers 10 to 23 Oct)
 
 **In short.** The first scores are in. betomcat ranked 49th of 306 bots in
@@ -220,21 +385,21 @@ comparison is limited to those 37 questions, all with news on both sides.
 
 **Models.** Successful attempts out of all attempts:
 
-| Model | Kind | OK / attempts | Main failure |
-|---|---|---|---|
-| claude-fable-5.1 | paid | 22 / 25 | parser bug |
-| claude-opus-5.5 | paid | 12 / 14 | parser bug |
-| claude-sonnet-5 | paid | 16 / 20 | parser bug |
-| gpt-6-astra | paid | 19 / 25 | parser bug, empty replies |
-| gpt-6-sol | paid | 15 / 18 | parser bug |
-| gpt-6-luna | paid | 21 / 24 | parser bug |
-| gemini-3.8-flash | free (Google) | 1 / 38 | Google "high demand" errors |
-| gemini-3.1-pro-preview | free (Google) | 0 / 6 | no free quota; disabled 30 Sep |
-| nemotron-3-super | free | 16 / 17 | |
-| nemotron-3-ultra | free | 15 / 25 | empty responses |
-| dots-3-note | free | 7 / 27 | empty replies |
-| qwen3.8-27b | free | 4 / 36 | no longer offered free |
-| glm-5.2 | free | 0 / 3 | retired; disabled 30 Sep |
+| Model                  | Kind          | OK / attempts | Main failure                   |
+| ---------------------- | ------------- | ------------- | ------------------------------ |
+| claude-fable-5.1       | paid          | 22 / 25       | parser bug                     |
+| claude-opus-5.5        | paid          | 12 / 14       | parser bug                     |
+| claude-sonnet-5        | paid          | 16 / 20       | parser bug                     |
+| gpt-6-astra            | paid          | 19 / 25       | parser bug, empty replies      |
+| gpt-6-sol              | paid          | 15 / 18       | parser bug                     |
+| gpt-6-luna             | paid          | 21 / 24       | parser bug                     |
+| gemini-3.8-flash       | free (Google) | 1 / 38        | Google "high demand" errors    |
+| gemini-3.1-pro-preview | free (Google) | 0 / 6         | no free quota; disabled 30 Sep |
+| nemotron-3-super       | free          | 16 / 17       |                                |
+| nemotron-3-ultra       | free          | 15 / 25       | empty responses                |
+| dots-3-note            | free          | 7 / 27        | empty replies                  |
+| qwen3.8-27b            | free          | 4 / 36        | no longer offered free         |
+| glm-5.2                | free          | 0 / 3         | retired; disabled 30 Sep       |
 
 Paid models fail rarely, and mostly because of the parser bug rather than the
 model. Free models other than nemotron-3-super fail often, and two that are

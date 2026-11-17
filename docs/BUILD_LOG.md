@@ -750,3 +750,45 @@ Decisions (defaults in force until answered):
   `~/snags.md`. Proposed to Hatim, not applied: the Write tool refused a
   Sonnet builder's report file too, so the inline-report exception in
   `~/CLAUDE.md` may need to cover every subagent, not only Haiku.
+
+### 2026-11-17
+
+- **Shifts since 23 Oct (ledger snapshot of 17 Nov).** Research recovered:
+  degraded runs 71/83 in the week of 19 Oct, 2/140 since 24 Oct. Every run
+  since 24 Oct has exactly two successful models; the referee examined 22
+  runs and re-researched 2; `weights.json` updates daily. 49 of 353 model
+  calls failed since 24 Oct, nearly all on free models
+  (`nemotron-3-super:free` 0/18 on 404s, `dots-3-note:free` 6/23 on empty
+  replies); 1 parse failure.
+- **forecasting-tools 0.3.6** (`ce78fcf` on `build/upstream-adapt`). Wheels
+  for 0.3.1, 0.3.6 and 0.3.7 diffed as text, not imported. The tournament
+  IDs are unchanged (33121, `minibench`) and `prediction_extractor.py` is
+  byte-identical, so the bump does not fix HANDOFF s5.9 item 1. 0.3.6 bounds
+  the scale search in `_standardize_cdf`, which in 0.3.1 can loop forever
+  on a CDF that is not increasing; `forecast_numeric` reaches it through
+  `get_cdf()`. 0.3.7 is identical to 0.3.6 in every file betomcat uses;
+  0.3.6 chosen as the one past upstream's 7-day cooldown.
+- **s5.9 item 1 skipped on evidence.** 0/314 successful numeric responses
+  hold two percentile blocks; the 2 numeric parse failures (28 Sep, 6 Oct)
+  are not that case.
+- **s5.9 item 2 is a no-op.** 334 questions, 334 distinct post URLs: no
+  group subquestion has reached the bot.
+- **OPENROUTER_API_KEY check** (`e5fa3c7`). Placed in `build_deps` and at
+  the top of `run_host`: a check only in `build_deps` runs after iw-server
+  starts, and `run_host`'s `finally` would dispatch a successor, chaining
+  failing shifts. Unconditional, since dry runs call LLMs.
+  `replay-outbox` does not use `build_deps`.
+- **review-bot skill via `uvx`** (`bd1f046`), not a dependency group: a new
+  group would re-resolve the universal lock the live bot installs from.
+- **Classifier block.** The lead sourced the whole `.env` into a
+  `uvx`-fetched third-party package to run `bot-review`; the auto-mode
+  classifier blocked it. Per `~/CLAUDE.md` the run stopped and the builder
+  was stopped. Hatim ran the command himself with only `METACULUS_TOKEN`,
+  then said to resume. The skill now says to pass only that variable.
+- **FE Fall standing and the numeric tail finding.** See HANDOFF s0 item 1
+  and the defence brief 2026-11-17. Hatim: the backtest goes in the handoff
+  as the first thing to do; this session's focus stays the sync.
+- **CLAUDE.md wording change** on `main` is Hatim's (an instruction review
+  the previous week); committed as is.
+- Team: one Sonnet builder (stopped by the block), a fresh Sonnet builder
+  for the tests, a Sonnet verifier; the lead re-ran all four gates.

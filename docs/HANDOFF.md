@@ -1,15 +1,81 @@
 # Handoff: state of the deployment and what remains
 
-Updated 2026-10-23 (end of session). **Start with s0 below**: it supersedes
-the order given in older sections. Then `docs/defence-brief.md` (what the
-evidence says, updated every lead session), `docs/BUILD_LOG.md` (full trace,
-every decision and why; 2026-10-23 is the newest entry), `docs/contracts.md`
-(IW <-> bot interfaces), `docs/spec.md` and `docs/brief.md` (intent).
-Sections 1-10 are from 2026-09-30 and still hold except where s0 or a status
-line says otherwise. 2026-11-10: upstream template sync merged on a local
-branch, adaptations still to build. See s5.9.
+Updated 2026-11-17 (end of session). **Start with s0 below**: it supersedes
+the order given in older sections. s0b (2026-10-23) still lists open items.
+Then `docs/defence-brief.md` (what the evidence says, updated every lead
+session), `docs/BUILD_LOG.md` (full trace, every decision and why; 2026-11-17
+is the newest entry), `docs/contracts.md` (IW <-> bot interfaces),
+`docs/spec.md` and `docs/brief.md` (intent). Sections 1-10 are from
+2026-09-30 and still hold except where s0, s0b or a status line says
+otherwise.
 
-## 0. Session 2026-10-23: state and next steps
+## 0. Session 2026-11-17: state and next steps
+
+### Where things stand
+
+- **Ledger snapshot of 17 Nov** (`pull-state`). The 23 Oct deployments work
+  in live shifts:
+  - Research recovered. Degraded runs went from 71/83 in the week of 19 Oct
+    to 2/140 since 24 Oct.
+  - Every run since 24 Oct has exactly 2 successful models.
+  - The referee examined 22 runs and re-researched 2.
+  - `weights.json` is updated daily (last 17 Nov 00:10 UTC).
+  - Failed model calls since 24 Oct are 49 of 353, almost all free models:
+    `nemotron-3-super:free` 0/18 (404s) and `dots-3-note:free` 6/23 (empty
+    replies). Only 1 was a parse failure.
+- **FE Fall (33121) on 17 Nov:** rank 360/490, spot peer -811.9, 32 scored of
+  122 forecast. Metaculus's reference bots run the same models with AskNews:
+  `metac-claude-sonnet-5-5-high+asknews` +475.6,
+  `metac-claude-opus-5-5-high+asknews` +445.4,
+  `metac-claude-fable-5-1-high+asknews` +586.5. Field median +47.6.
+  betomcat is 197th of the 214 bots with coverage >= 28. Source: Hatim ran
+  the `review-bot` skill (`bot-review review --tournament 33121`).
+- **Upstream sync:** adaptations built on `build/upstream-adapt`, see s5.9.
+
+### Next, in order
+
+1. **ASAP: backtest the numeric tail fix** (Hatim, 2026-11-17; the FE
+   numbers above make this the top performance item).
+   - **Finding.** Numeric and discrete questions are 15 of the 32 scored FE
+     questions and -528.6 of the -811.9. The four worst (posts 45955, 46284,
+     45961 and 46195; peer -167, -143, -117 and -117) all score exactly
+     -106.5 baseline. Metaculus marks three as out of bounds. 45961 resolved
+     at $109.9M, and the models' rationales place its open lower bound near
+     $110M, so it most likely fell just below. That is inferred: the bounds
+     were not fetched, because `/api/posts/` returned 403 to plain curl.
+   - **Mechanism** (checked against the forecasting-tools source).
+     `prompts/numeric.md` asks for P1..P99, and models keep P99 inside an
+     open bound. `NumericDistribution._add_explicit_upper_lower_bound_percentiles`
+     then puts the bound at percentile `100 - 0.5 * (100 - 99)` = 99.5, and
+     `_standardize_cdf` maps that to `0.988 * 0.995 + 0.011` = 0.99406.
+     That leaves 0.594% beyond each open bound, which is what the ledger's
+     final CDFs show (`1 - cdf[-1]` = `cdf[0]` = 0.0059). 50 * ln(0.00594 /
+     0.05) = -106.5. The template asks for P10..P90, which leaves about 5%
+     beyond the bound, where an out-of-bounds outcome scores about 0.
+   - **Backtest, no LLM spend.** `model_forecasts.rationale` holds each
+     model's full response, percentile lines included. Take every resolved
+     numeric, discrete and date question in the ledger (`resolutions`,
+     MiniBench included). Fetch each question's bounds from
+     `GET /api/posts/<post>/`, because the ledger does not store them.
+     Re-parse the per-model percentiles, rebuild each CDF with
+     `NumericDistribution`, and average the models as the pipeline does.
+     Score with Metaculus's continuous baseline score under these variants:
+     today's P1..P99, P5..P95 only, P10..P90 only, and a mix with a wide
+     distribution. Check first that today's variant reproduces -106.5 on
+     posts 45955, 46284 and 46195. 45961 should match too if its lower bound
+     is $110M. Group related questions when you estimate uncertainty.
+   - **Decision: Hatim.** The prompt is tradecraft. Bring the per-variant
+     totals and the in-range cost of wider tails.
+   - **Then test the binary pattern** (seen, untested). All 13 scored FE
+     binary forecasts lie in 0.095-0.594, and the losses fall where the field
+     was confident and right. Compare against resolutions across all resolved
+     binaries before calling it a bias.
+2. **Merge the upstream sync** once Hatim has reviewed `build/upstream-adapt`
+   (s5.9). host dispatches on `main`.
+3. Items 2-6 of s0b below are still open (summary email, Luna fallback,
+   v2 archive, scout skill, E2-E5 and the snapshot-upload crash).
+
+## 0b. Session 2026-10-23: state and next steps
 
 ### Where things stand
 
@@ -42,7 +108,10 @@ a live shift yet.**
 
 ### Next, in order
 
-1. **Verify the first shifts after 20:50 UTC 23 Oct** (`host.yml` runs, then
+1. **DONE 2026-11-17 from the ledger (s0): research, referee, weights and
+   two-model runs all work.** The `Test gate` step and the AskNews 402 log
+   check were not re-read. Original item: **Verify the first shifts after
+   20:50 UTC 23 Oct** (`host.yml` runs, then
    `pull-state` into a temp dir):
    - the `Test gate` step ran green before the host step;
    - IW research not degraded: `runs.degraded` 0 on new runs, and IW
@@ -611,7 +680,28 @@ Decisions in BUILD_LOG 2026-10-09: weekly, pull request, candidate rule. The not
   back a 48 h title index (~150 MB download per shift). Numbers and options:
   BUILD_LOG 2026-10-09. Hatim will look closer; retry the DOC API first.
 
-### 5.9 Upstream template sync (2026-11-10): merge done, adaptations not built
+### 5.9 Upstream template sync (2026-11-10): adaptations built 2026-11-17, merge waits for Hatim
+
+**Status 2026-11-17.** The branch `build/upstream-adapt` stacks one commit
+per item on the merge `392b966`. Each can be cherry-picked if Hatim drops
+the sync. All four gates pass (488 tests). Worktree:
+`/home/hatim/projects/betomcat-wt/adapt`. Details in BUILD_LOG 2026-11-17.
+
+- Item 0: done. 0.3.6 keeps the tournament IDs and `PredictionExtractor`
+  as they were, and bounds the loop in `_standardize_cdf`. Bumped in
+  `ce78fcf`, which moves only forecasting-tools in the lock.
+- Item 1: skipped on evidence. 0 of 314 successful numeric responses in the
+  ledger hold a second percentile block. The 2 numeric parse failures since
+  28 Sep are not this case. Build it only if the ledger starts showing it.
+- Item 2: no-op. No group subquestion has ever reached the bot. Subquestions
+  share their post's URL, and the ledger has 334 distinct URLs for 334
+  questions. The SDK unpacks groups by default, so revisit if one appears.
+- Item 3: done in `e5fa3c7`. The key check guards `build_deps` and the top
+  of `run_host`, before restore and the IW start, so the shift chain breaks
+  instead of looping.
+- Item 4: done in `bd1f046`, via the `uvx` route. Hatim ran it for FE Fall
+  on 17 Nov, and the score table works.
+- Item 5: skipped (optional).
 
 Upstream `Metaculus/metac-bot-template` is now the `upstream` remote. It has
 10 new commits past our fork point: `6dab04c..bcbd016`.
