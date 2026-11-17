@@ -5,7 +5,7 @@ description = "FutureEval forecasting bot (v1) fed by the Intelligence Workbench
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "forecasting-tools>=0.3.1,<0.4",
+    "forecasting-tools>=0.3.6,<0.4",
     "httpx>=0.28,<1",
     "orjson>=3.10,<4",
     "pydantic>=2.9,<3",

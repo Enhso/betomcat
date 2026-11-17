@@ -236,7 +236,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=43.0,<47" },
-    { name = "forecasting-tools", specifier = ">=0.3.1,<0.4" },
+    { name = "forecasting-tools", specifier = ">=0.3.6,<0.4" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "orjson", specifier = ">=3.10,<4" },
     { name = "pydantic", specifier = ">=2.9,<3" },
@@ -537,7 +537,7 @@ wheels = [
 
 [[package]]
 name = "forecasting-tools"
-version = "0.3.1"
+version = "0.3.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -561,9 +561,9 @@ dependencies = [
     { name = "typeguard" },
     { name = "unidecode" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/e7/cd05836d22d09a40dee840a04184fac049a32da91855c62df67b3b986a11/forecasting_tools-0.3.1.tar.gz", hash = "sha256:5d4f561fcb4919cc8c3d7cb5843d70de22b523516a689e018446d2bd4b874bdc", size = 1750638, upload-time = "2026-09-08T15:54:00.196Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/07/4709070b927cc345afad03429e5967d65f785845df0489a54e655f2c4656/forecasting_tools-0.3.6.tar.gz", hash = "sha256:254602dc539f9028ac2fe63a80bc171931b8d4aea89bc5c39eac121275fe184c", size = 27833814, upload-time = "2026-11-08T01:05:22.788Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/02/5e02908669fa5a2b3fbc916c2154c71aef8e176dee56c4cad6f7f3b9a074/forecasting_tools-0.3.1-py3-none-any.whl", hash = "sha256:647146a85a6a8ad32dc4dc45673449562f2be6938ae9e92e5ac25ee20101120c", size = 1884330, upload-time = "2026-09-08T15:54:01.995Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/41/d8e5647a12c6d461a70211ad222480cf5c69ce0f0197eac05f7c15df9d0d/forecasting_tools-0.3.6-py3-none-any.whl", hash = "sha256:fd0ec1718de7ee5e81fe854c9f64f78d79c73b8300a1f7febcfd9d7f2f2f8d27", size = 1888286, upload-time = "2026-11-08T01:05:11.896Z" },
 ]
 
 [[package]]
