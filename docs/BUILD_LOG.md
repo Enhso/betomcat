@@ -792,3 +792,7 @@ Decisions (defaults in force until answered):
   the previous week); committed as is.
 - Team: one Sonnet builder (stopped by the block), a fresh Sonnet builder
   for the tests, a Sonnet verifier; the lead re-ran all four gates.
+- **Merged and pushed on Hatim's go** (`bfe7e31`). He chose a direct merge
+  over a PR. Before the push, the lead covered the clean-runner check a PR's
+  CI would have given: a detached checkout of `bfe7e31`, `uv sync --locked`
+  with an empty `UV_CACHE_DIR`, then all four gates (488 passed).

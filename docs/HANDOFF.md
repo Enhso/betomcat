@@ -30,7 +30,8 @@ otherwise.
   `metac-claude-fable-5-1-high+asknews` +586.5. Field median +47.6.
   betomcat is 197th of the 214 bots with coverage >= 28. Source: Hatim ran
   the `review-bot` skill (`bot-review review --tournament 33121`).
-- **Upstream sync:** adaptations built on `build/upstream-adapt`, see s5.9.
+- **Upstream sync:** merged to `main` on 17 Nov (`bfe7e31`, Hatim's go) and
+  pushed. See s5.9.
 
 ### Next, in order
 
@@ -70,8 +71,8 @@ otherwise.
      binary forecasts lie in 0.095-0.594, and the losses fall where the field
      was confident and right. Compare against resolutions across all resolved
      binaries before calling it a bias.
-2. **Merge the upstream sync** once Hatim has reviewed `build/upstream-adapt`
-   (s5.9). host dispatches on `main`.
+2. **Check the first shift on the merged `main`.** Its `Test gate` step
+   should pass, and runs should keep two successful models.
 3. Items 2-6 of s0b below are still open (summary email, Luna fallback,
    v2 archive, scout skill, E2-E5 and the snapshot-upload crash).
 
@@ -680,12 +681,14 @@ Decisions in BUILD_LOG 2026-10-09: weekly, pull request, candidate rule. The not
   back a 48 h title index (~150 MB download per shift). Numbers and options:
   BUILD_LOG 2026-10-09. Hatim will look closer; retry the DOC API first.
 
-### 5.9 Upstream template sync (2026-11-10): adaptations built 2026-11-17, merge waits for Hatim
+### 5.9 Upstream template sync (2026-11-10) -- DONE 2026-11-17 (`bfe7e31` on `main`)
 
 **Status 2026-11-17.** The branch `build/upstream-adapt` stacks one commit
-per item on the merge `392b966`. Each can be cherry-picked if Hatim drops
-the sync. All four gates pass (488 tests). Worktree:
-`/home/hatim/projects/betomcat-wt/adapt`. Details in BUILD_LOG 2026-11-17.
+per item on the merge `392b966`. Hatim had it merged to `main` as `bfe7e31`.
+Before the push, the lead installed from the lock with an empty uv cache
+(`uv sync --locked`) in a clean checkout. All four gates passed (488
+tests). Details in BUILD_LOG 2026-11-17. The next sync starts from
+`git fetch upstream && git log HEAD..upstream/main`.
 
 - Item 0: done. 0.3.6 keeps the tournament IDs and `PredictionExtractor`
   as they were, and bounds the loop in `_standardize_cdf`. Bumped in
