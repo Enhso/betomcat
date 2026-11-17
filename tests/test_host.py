@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -220,7 +221,7 @@ class _FakeIwProcess:
 def _host_settings(data_dir: Path) -> Settings:
     return Settings(
         metaculus_token=None,
-        openrouter_api_key=None,
+        openrouter_api_key="synthetic-key",
         openrouter_free_api_key=None,
         asknews_api_key=None,
         iw_url="http://127.0.0.1:8080",
@@ -287,6 +288,42 @@ async def test_run_host_abandons_unfinished_runs_before_the_daemon_loop_starts(
         "marked 1 unfinished run(s) from earlier shifts abandoned" in r.getMessage()
         for r in caplog.records
     )
+
+
+async def test_run_host_without_openrouter_key_fails_before_any_side_effect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A later failure would make run_host's finally dispatch a successor shift,
+    chaining failing shifts, so the key check must precede restore and iw start."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setenv("STATE_KEY", "synthetic-state-key")
+    side_effects: list[str] = []
+
+    async def record(name: str) -> None:
+        side_effects.append(name)
+
+    async def fake_restore(*args: object, **kwargs: object) -> None:
+        await record("restore")
+
+    async def fake_spawn(*args: object, **kwargs: object) -> _FakeIwProcess:
+        await record("iw-server")
+        return _FakeIwProcess()
+
+    async def fake_dispatch(*args: object, **kwargs: object) -> None:
+        await record("dispatch")
+
+    monkeypatch.setattr("betomcat.host.state.restore_latest", fake_restore)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr("betomcat.host._dispatch_successor", fake_dispatch)
+    settings = dataclasses.replace(
+        _host_settings(tmp_path / "data"), openrouter_api_key=None
+    )
+
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        await run_host(settings, shift_minutes=10, local=False)
+
+    assert side_effects == []
 
 
 async def _run_weight_task_for(

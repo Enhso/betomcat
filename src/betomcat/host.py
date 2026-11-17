@@ -51,7 +51,7 @@ from urllib.parse import urlparse
 import httpx
 
 from betomcat import state
-from betomcat.config import Settings
+from betomcat.config import Settings, require_openrouter_key
 from betomcat.daemon import DaemonHooks, run_daemon
 from betomcat.pipeline import PipelineOutcome
 from betomcat.weights import update_weights, weights_updated_today
@@ -279,6 +279,7 @@ async def run_host(
             "host mode requires GITHUB_REPOSITORY, GITHUB_TOKEN, and STATE_KEY "
             "(pass --local to run against local DATA_DIR only)"
         )
+    require_openrouter_key(settings)
 
     releases = state.GitHubReleases(repo, github_token) if not local else None
     try:

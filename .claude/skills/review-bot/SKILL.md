@@ -10,7 +10,7 @@ is read-only Metaculus API traffic. No forecasting, no publishing, no API spend.
 
 ## Hard rules
 
-- **Never run the bot.** `python main.py` spends money and publishes comments. This skill
+- **Never run the bot.** `python main.py` (upstream template) or `uv run betomcat ...` (this bot) spends money and publishes comments. This skill
   only reads.
 - **Never read a whole report.** Pull one section of one question with `show`.
 - **Ask before changing code.** Diagnose first, propose fixes in the review.
@@ -19,11 +19,12 @@ is read-only Metaculus API traffic. No forecasting, no publishing, no API spend.
 
 ## 1. Build the data
 
-`bot-review` comes from the optional `metaculus-bot-review` package. If it is not installed,
-run `poetry install --with integrations` first.
+`bot-review` comes from the optional `metaculus-bot-review` package. `uvx --from metaculus-bot-review`
+fetches it into its own environment on first use, so the project's `uv.lock` is untouched.
+`bot-review` needs only `METACULUS_TOKEN`; pass that one variable, never the whole `.env`, since uvx runs a downloaded package.
 
 ```bash
-poetry run bot-review review --tournament <slug-or-id> \
+uvx --from metaculus-bot-review bot-review review --tournament <slug-or-id> \
     --output review.json --summary review-summary.md
 ```
 
@@ -67,11 +68,16 @@ Stop as soon as the question is answered.
 the run time. A tight cluster that all missed points at a shared input or blind spot; a wide
 spread that landed badly points at aggregation; one model alone and right is worth naming.
 
+> betomcat posts one short private comment per question, not the template's report layout, so
+> `show --section research` and `--forecaster` find nothing here. The full per-question audit
+> report is `submissions.report` in the bot's ledger, pulled with `uv run betomcat pull-state`
+> (`docs/HANDOFF.md` section 8, "Live state mid-shift").
+
 **b. Search the research** — near-free. You know what the question resolved to, so search for
 it rather than reading:
 
 ```bash
-poetry run bot-review show <POST_ID> --comment <COMMENT_ID> \
+uvx --from metaculus-bot-review bot-review show <POST_ID> --comment <COMMENT_ID> \
     --section research | grep -niE "<the deciding fact>" | head
 ```
 
@@ -80,7 +86,7 @@ Found → the research had it and the forecasters underused it. Absent → likel
 **c. One or two rationales** — the outlier, or one from the cluster if they all agreed.
 
 ```bash
-poetry run bot-review show <POST_ID> --comment <COMMENT_ID> --forecaster R1:F3
+uvx --from metaculus-bot-review bot-review show <POST_ID> --comment <COMMENT_ID> --forecaster R1:F3
 ```
 
 **d. The whole research section** — last resort, when the searches came up empty and you need

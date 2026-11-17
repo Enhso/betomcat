@@ -69,14 +69,21 @@ async def test_build_deps_configures_a_live_budget_guard(tmp_path: Path) -> None
         deps.ledger.close()
 
 
-async def test_build_deps_budget_guard_falls_open_with_no_keys(tmp_path: Path) -> None:
+def test_build_deps_raises_when_the_openrouter_key_is_missing(tmp_path: Path) -> None:
+    settings = dataclasses.replace(_settings(tmp_path), openrouter_api_key=None)
+
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        build_deps(settings, dry_run=True)
+
+
+async def test_build_deps_budget_guard_falls_open_with_no_free_key(
+    tmp_path: Path,
+) -> None:
     """A missing free key must not break the guard: it just fails open for it."""
-    settings = dataclasses.replace(
-        _settings(tmp_path), openrouter_api_key=None, openrouter_free_api_key=None
-    )
+    settings = dataclasses.replace(_settings(tmp_path), openrouter_free_api_key=None)
     deps = build_deps(settings, dry_run=True)
     try:
-        assert deps.budget.funded_api_key is None
+        assert deps.budget.funded_api_key == "funded-key"
         assert deps.budget.free_api_key is None
     finally:
         await deps.iw.aclose()
