@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from betomcat.config import load_settings
+from betomcat.config import load_settings, require_openrouter_key
 
 
 @pytest.fixture(autouse=True)
@@ -164,3 +164,26 @@ def test_load_settings_blank_gemini_api_key_is_none(
     settings = load_settings(empty_env)
 
     assert settings.gemini_api_key is None
+
+
+def test_require_openrouter_key_returns_the_key_when_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "synthetic-key")
+
+    settings = load_settings(tmp_path / "missing.env")
+
+    assert require_openrouter_key(settings) == "synthetic-key"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_require_openrouter_key_raises_when_unset_or_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: str | None
+) -> None:
+    if value is not None:
+        monkeypatch.setenv("OPENROUTER_API_KEY", value)
+
+    settings = load_settings(tmp_path / "missing.env")
+
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        require_openrouter_key(settings)

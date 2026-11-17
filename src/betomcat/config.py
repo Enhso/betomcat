@@ -121,6 +121,24 @@ class Settings:
     asknews_monthly_calls: int = ASKNEWS_MONTHLY_CALLS
 
 
+def require_openrouter_key(settings: Settings) -> str:
+    """Return the OpenRouter key, refusing to run without one.
+
+    Args:
+        settings: Loaded settings.
+
+    Returns:
+        The non-empty OpenRouter API key.
+
+    Raises:
+        RuntimeError: If `OPENROUTER_API_KEY` is unset, since every forecast
+            would otherwise fail permanently inside the retry ladder.
+    """
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is required to run the bot")
+    return settings.openrouter_api_key
+
+
 def load_settings(env_path: Path | str | None = None) -> Settings:
     """Load settings from `.env` (if present) and the process environment.
 

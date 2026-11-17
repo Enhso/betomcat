@@ -27,7 +27,7 @@ import httpx
 import orjson
 
 from betomcat.budget import BudgetGuard
-from betomcat.config import Settings, load_settings
+from betomcat.config import Settings, load_settings, require_openrouter_key
 from betomcat.daemon import run_daemon
 from betomcat.forecast import REPO_ROOT
 from betomcat.ledger import Ledger
@@ -46,10 +46,11 @@ DEFAULT_SHIFT_MINUTES = 330
 
 
 def build_deps(settings: Settings, dry_run: bool) -> PipelineDeps:
+    openrouter_key = require_openrouter_key(settings)
     ledger = Ledger(settings.data_dir / "ledger.sqlite")
     iw = IWClient(settings.iw_url, settings.asknews_api_key, settings.data_dir)
     llm = OpenRouterClient(
-        settings.openrouter_api_key or "",
+        openrouter_key,
         free_api_key=settings.openrouter_free_api_key,
         gemini_api_key=settings.gemini_api_key,
     )
