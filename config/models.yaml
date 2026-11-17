@@ -346,3 +346,69 @@ models:
     price_out: 0
     context_tokens: 262144
     notes: "Added by the weekly model check on 2026-11-02 (released 2026-10-21); not probed yet."
+
+  - id: anthropic/claude-fable-5.2
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 8
+    price_out: 40
+    context_tokens: 1000000
+    notes: "Added by the weekly model check on 2026-11-16 (released 2026-11-09); not probed yet."
+
+  - id: baidu/ernie-5.5-flash-preview:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 1024000
+    notes: "Added by the weekly model check on 2026-11-16 (released 2026-11-10); not probed yet."
+
+  - id: inclusionai/ling-3.2-flash:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 1048576
+    notes: "Added by the weekly model check on 2026-11-16 (released 2026-11-13); not probed yet."
+
+  - id: liquid/lfm-3-1.7b:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 262144
+    notes: "Added by the weekly model check on 2026-11-16 (released 2026-11-06); not probed yet."
+
+  - id: particle-ai/particle-1:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 1048576
+    notes: "Added by the weekly model check on 2026-11-16 (released 2026-10-28); not probed yet."
+
+  - id: thinkingmachines/inkling-2-small:free
+    tier: free
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 0
+    price_out: 0
+    context_tokens: 1048576
+    notes: "Added by the weekly model check on 2026-11-16 (released 2026-11-09); not probed yet."
