@@ -1,12 +1,12 @@
 # Agent Guidelines for Python Code Quality
 
-**Every lead session ends by updating `docs/defence-brief.md`** (Hatim, 2026-10-09; subagents never touch it, 2026-10-23): sections 1-2 when the design changed, plus a new dated evidence entry in section 3 with numbers from the ledger, the shift logs and Metaculus. Public repo: no forecasts, rationales or claims of open questions.
+**Every lead session ends by updating `docs/defence-brief.md`; subagents never touch it.** Update sections 1-2 when the design changed, plus a new dated evidence entry in section 3 with numbers from the ledger, the shift logs and Metaculus. Public repo: no forecasts, rationales or claims of open questions.
 
-This document provides guidelines for maintaining high-quality Python code. These rules MUST be followed by all AI coding agents and contributors.
+This document provides guidelines for maintaining high-quality Python code. These rules must be followed by all AI coding agents and contributors.
 
 ## Your Core Principles
 
-All code you write MUST be fully optimized.
+All code you write must be fully optimized.
 
 "Fully optimized" includes:
 
@@ -14,9 +14,9 @@ All code you write MUST be fully optimized.
 - using parallelization and vectorization where appropriate
 - following proper style conventions for the code language (e.g. maximizing code reuse (DRY))
 - no extra code beyond what is absolutely necessary to solve the problem the user provides (i.e. no technical debt)
-  - If a Python library can be imported to significantly reduce the amount of new code required to implement a function at optimal performance, and the library itself is small and does not have much overhead, ALWAYS use the library instead.
+  - If a Python library can be imported to significantly reduce the amount of new code required to implement a function at optimal performance, and the library itself is small and does not have much overhead, always use the library instead.
 
-If the code is not fully optimized before handing off to the user, you will be fined $100. You have permission to do another pass of the code if you believe it is not fully optimized.
+Before handing code to the user, check it against this definition and do another pass if it falls short.
 
 ## Preferred Tools
 
@@ -27,30 +27,30 @@ If the code is not fully optimized before handing off to the user, you will be f
 - When reporting error to the console, use `logger.error` instead of `print`.
 - If the project involves the creation of images (e.g. PNG/WEBP), you have permission to use the Read tool to verify the rendered images fit the user and application requirements.
 - For data science:
-  - **ALWAYS** use `polars` instead of `pandas` for data frame manipulation.
-  - If a `polars` dataframe will be printed, **NEVER** simultaneously print the number of entries in the dataframe nor the schema as it is redundant.
-  - **NEVER** ingest more than 10 rows of a data frame at a time. Only analyze subsets of code to avoid overloading your memory context.
+  - Always use `polars` instead of `pandas` for data frame manipulation.
+  - If a `polars` dataframe will be printed, never simultaneously print the number of entries in the dataframe nor the schema as it is redundant.
+  - Never ingest more than 10 rows of a data frame at a time. Only analyze subsets of code to avoid overloading your memory context.
 - For creating databases:
   - Do not denormalized unless explicitly prompted to do so.
   - Always use the most appropriate datatype, such as `DATETIME/TIMESTAMP` for datetime-related fields.
-  - Use `ARRAY` datatypes for nested fields. **NEVER** save as `TEXT/STRING`.
+  - Use `ARRAY` datatypes for nested fields. Never save as `TEXT/STRING`.
 - In Jupyter Notebooks, DataFrame objects within conditional blocks should be explicitly `print()` as they will not be printed automatically.
 
 ## Code Style and Formatting
 
-- **MUST** use meaningful, descriptive variable and function names
-- **MUST** follow PEP 8 style guidelines
-- **MUST** use 4 spaces for indentation (never tabs)
-- **NEVER** use emoji, or unicode that emulates emoji (e.g. ✓, ✗). The only exception is when writing tests and testing the impact of multibyte characters.
+- Use meaningful, descriptive variable and function names
+- Follow PEP 8 style guidelines
+- Use 4 spaces for indentation (never tabs)
+- Never use emoji, or unicode that emulates emoji (e.g. ✓, ✗). The only exception is when writing tests and testing the impact of multibyte characters.
 - Use snake_case for functions/variables, PascalCase for classes, UPPER_CASE for constants
 - Limit line length to 88 characters (ruff formatter standard)
-- **MUST** avoid including redundant comments which are tautological or self-demonstating (e.g. cases where it is easily parsable what the code does at a glance so the comment does)
-- **MUST** avoid including comments which leak what this file contains, or leak the original user prompt, ESPECIALLY if it's irrelevant to the output code.
+- Avoid including redundant comments which are tautological or self-demonstating (e.g. cases where it is easily parsable what the code does at a glance so the comment does)
+- Avoid including comments which leak what this file contains, or leak the original user prompt, especially if it's irrelevant to the output code.
 
 ## Documentation
 
-- **MUST** include docstrings for all public functions, classes, and methods
-- **MUST** document function parameters, return values, and exceptions raised
+- Include docstrings for all public functions, classes, and methods
+- Document function parameters, return values, and exceptions raised
 - Keep comments up-to-date with code changes
 - Include examples in docstrings for complex functions
 
@@ -74,30 +74,30 @@ def calculate_total(items: list[dict], tax_rate: float = 0.0) -> float:
 
 ## Type Hints
 
-- **MUST** use type hints for all function signatures (parameters and return values)
-- **NEVER** use `Any` type unless absolutely necessary
-- **MUST** run mypy and resolve all type errors
+- Use type hints for all function signatures (parameters and return values)
+- Never use `Any` type unless absolutely necessary
+- Run mypy and resolve all type errors
 - Use `Optional[T]` or `T | None` for nullable types
 
 ## Error Handling
 
-- **NEVER** silently swallow exceptions without logging
-- **MUST** never use bare `except:` clauses
-- **MUST** catch specific exceptions rather than broad exception types
-- **MUST** use context managers (`with` statements) for resource cleanup
+- Never silently swallow exceptions without logging
+- Never use bare `except:` clauses
+- Catch specific exceptions rather than broad exception types
+- Use context managers (`with` statements) for resource cleanup
 - Provide meaningful error messages
 
 ## Function Design
 
-- **MUST** keep functions focused on a single responsibility
-- **NEVER** use mutable objects (lists, dicts) as default argument values
+- Keep functions focused on a single responsibility
+- Never use mutable objects (lists, dicts) as default argument values
 - Limit function parameters to 5 or fewer
 - Return early to reduce nesting
 
 ## Class Design
 
-- **MUST** keep classes focused on a single responsibility
-- **MUST** keep `__init__` simple; avoid complex logic
+- Keep classes focused on a single responsibility
+- Keep `__init__` simple; avoid complex logic
 - Use dataclasses for simple data containers
 - Prefer composition over inheritance
 - Avoid creating additional class functions if they are not necessary
@@ -105,58 +105,58 @@ def calculate_total(items: list[dict], tax_rate: float = 0.0) -> float:
 
 ## Testing
 
-- **MUST** write unit tests for all new functions and classes
-- **MUST** mock external dependencies (APIs, databases, file systems)
-- **MUST** use pytest as the testing framework
-- **NEVER** run tests you generate without first saving them as their own discrete file
-- **NEVER** delete files created as a part of testing.
+- Write unit tests for all new functions and classes
+- Mock external dependencies (APIs, databases, file systems)
+- Use pytest as the testing framework
+- Never run tests you generate without first saving them as their own discrete file
+- Never delete files created as a part of testing.
 - Ensure the folder used for test outputs is present in `.gitignore`
 - Follow the Arrange-Act-Assert pattern
 - Do not commit commented-out tests
 
 ## Imports and Dependencies
 
-- **MUST** avoid wildcard imports (`from module import *`)
-- **MUST** document dependencies in `pyproject.toml`
+- Avoid wildcard imports (`from module import *`)
+- Document dependencies in `pyproject.toml`
 - Use `uv` for fast package management and dependency resolution
 - Organize imports: standard library, third-party, local imports
 - Use `isort` to automate import formatting
 
 ## Python Best Practices
 
-- **NEVER** use mutable default arguments
-- **MUST** use context managers (`with` statement) for file/resource management
-- **MUST** use `is` for comparing with `None`, `True`, `False`
-- **MUST** use f-strings for string formatting
+- Never use mutable default arguments
+- Use context managers (`with` statement) for file/resource management
+- Use `is` for comparing with `None`, `True`, `False`
+- Use f-strings for string formatting
 - Use list comprehensions and generator expressions
 - Use `enumerate()` instead of manual counter variables
 
 ## Benchmarking and Optimization
 
-- **NEVER** run benchmarks in parallel, as the benchmarks will compete for resources and the results will be invalid
-- **NEVER** game the benchmarks. Do not manipulate the benchmarks themselves to satisfy any required performance constraints
+- Never run benchmarks in parallel, as the benchmarks will compete for resources and the results will be invalid
+- Never game the benchmarks. Do not manipulate the benchmarks themselves to satisfy any required performance constraints
 - If benchmarking against another crate or library, ensure the benchmarks are apples-to-apples comparisons
 - Ensure benchmark tests are independent. If the tests are dependent due to a feature (e.g. caching), ensure the feature is disabled
 
 ## Security
 
-- **NEVER** store secrets, API keys, or passwords in code. Only store them in `.env`
+- Never store secrets, API keys, or passwords in code. Only store them in `.env`
   - Ensure `.env` is declared in `.gitignore`.
-  - **NEVER** print or log URLs to console if they contain an API key
-- **MUST** use environment variables for sensitive configuration
-- **NEVER** log sensitive information (passwords, tokens, PII)
+  - Never print or log URLs to console if they contain an API key
+- Use environment variables for sensitive configuration
+- Never log sensitive information (passwords, tokens, PII)
 
 ## Version Control
 
-- **MUST** write clear, descriptive commit messages
-- **NEVER** commit commented-out code; delete it
-- **NEVER** commit debug print statements or breakpoints
-- **NEVER** commit credentials or sensitive data
+- Write clear, descriptive commit messages
+- Never commit commented-out code; delete it
+- Never commit debug print statements or breakpoints
+- Never commit credentials or sensitive data
 
 ## Tools
 
-- **MUST** use Ruff for code formatting and linting (replaces Black, isort, flake8)
-- **MUST** use mypy for static type checking
+- Use Ruff for code formatting and linting (replaces Black, isort, flake8)
+- Use mypy for static type checking
 - Use `uv` for package management (faster alternative to pip)
 - Use pytest for testing
 
@@ -171,4 +171,4 @@ def calculate_total(items: list[dict], tax_rate: float = 0.0) -> float:
 
 ---
 
-**Remember:** Prioritize clarity and maintainability over cleverness. This is your core directive.
+Where full optimization and clarity pull apart, choose the clearer code unless the task needs the speed.
