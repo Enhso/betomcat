@@ -79,9 +79,9 @@ do not pad your response with conversational pleasantries.
      squeeze, or hyper-adoption surge would push the metric far above it?
    - These structural surprises belong in the 10% of probability below your
      10th percentile and the 10% above your 90th. That mass is spread out to
-     and beyond the question's bounds for you, so set the 10th and 90th
-     percentiles as genuine one-in-ten outcomes, not as worst cases. Respect
-     open/closed boundary rules.
+     the question's bounds, and past any open bound, for you, so set the 10th
+     and 90th percentiles as genuine one-in-ten outcomes, not as worst cases.
+     Respect open/closed boundary rules.
 7. **Percentile calibration & monotonicity check.** Assemble the distribution.
    Ensure that the 50th percentile reflects your median scenario, the 20th–80th
    span your plausible confidence range, and the 10th and 90th leave one chance
