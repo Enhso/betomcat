@@ -273,13 +273,11 @@ def _disable_entries(text: str, notes: dict[str, str]) -> str:
 def _render_addition(
     addition: Addition, today: date, refused_reason: str | None, probed: bool
 ) -> str:
-    note = (
-        f"Added by the weekly model check on {today} "
-        f"(released {addition.released}); "
-        f"{'test call not refused' if probed else 'not probed yet'}."
-    )
+    note = f"Added by the weekly model check on {today} (released {addition.released})"
     if refused_reason is not None:
-        note = _disabled_note(note, refused_reason, today)
+        note = _disabled_note(f"{note}.", refused_reason, today)
+    else:
+        note += f"; {'test call not refused' if probed else 'not probed yet'}."
     lines = [
         "",
         f"  - id: {addition.id}",

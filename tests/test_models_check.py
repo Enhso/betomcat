@@ -579,6 +579,7 @@ def test_refused_addition_is_appended_disabled_and_passing_one_is_not_refused() 
     assert models["vendor/dead:free"].enabled is False
     assert "Disabled 2026-10-09" in (models["vendor/dead:free"].notes or "")
     assert "test call refused with HTTP 403" in (models["vendor/dead:free"].notes or "")
+    assert "not refused" not in (models["vendor/dead:free"].notes or "")
     assert models["vendor/live:free"].enabled is True
     assert "test call not refused" in (models["vendor/live:free"].notes or "")
     assert [d.id for d in result.disabled] == ["vendor/dead:free"]
