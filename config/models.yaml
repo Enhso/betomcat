@@ -404,11 +404,11 @@ models:
 
   - id: thinkingmachines/inkling-2-small:free
     tier: free
-    enabled: true
+    enabled: false
     max_tokens: 8000
     reasoning:
       effort: high
     price_in: 0
     price_out: 0
     context_tokens: 1048576
-    notes: "Added by the weekly model check on 2026-11-16 (released 2026-11-09); not probed yet."
+    notes: "Disabled 2026-11-20: OpenRouter 403 on 9/9 live calls since 17 Nov, 'only available on agentic harnesses'."
