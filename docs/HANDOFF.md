@@ -1,13 +1,70 @@
 # Handoff: state of the deployment and what remains
 
-Updated 2026-11-17 (end of session). **Start with s0 below**: it supersedes
-the order given in older sections. s0b (2026-10-23) still lists open items.
-Then `docs/defence-brief.md` (what the evidence says, updated every lead
-session), `docs/BUILD_LOG.md` (full trace, every decision and why; 2026-11-17
-is the newest entry), `docs/contracts.md` (IW <-> bot interfaces),
-`docs/spec.md` and `docs/brief.md` (intent). Sections 1-10 are from
-2026-09-30 and still hold except where s0, s0b or a status line says
-otherwise.
+Updated 2026-11-20 (end of session). **Start with s00 below**: it supersedes
+the order given in older sections. s0 (2026-11-17) and s0b (2026-10-23) still
+list open items. Then `docs/defence-brief.md` (what the evidence says,
+updated every lead session), `docs/BUILD_LOG.md` (full trace, every decision
+and why; 2026-11-20 is the newest entry), `docs/contracts.md` (IW <-> bot
+interfaces), `docs/spec.md` and `docs/brief.md` (intent). Sections 1-10 are
+from 2026-09-30 and still hold except where s00, s0, s0b or a status line
+says otherwise.
+
+## 00. Session 2026-11-20: state and next steps
+
+### Where things stand
+
+- **Tail backtest built** (`7730a7f` on `build/tail-backtest`, not merged).
+  `uv run python -m betomcat.backtest --ledger <pulled>/ledger.sqlite --out
+  <scratch dir> --check-posts 45955,46284,46195,45961`. Ledger only: no
+  network, no LLM. Output holds private ledger data, so keep it out of the
+  repo. Rerun it as more questions resolve (84 numeric were pending on
+  20 Nov).
+  - Gate: 79/79 resolved numeric+discrete questions rebuild the stored
+    per-model CDFs and the scored submission exactly (diff 0.0). All four
+    named posts score -106.5 baseline. 45961's open lower bound is exactly
+    $110M (from `resolutions.scaling_json`, which already caches every
+    resolved question's grid and open flags, so no `/api/posts/` fetch is
+    needed).
+  - Results (peer points vs today over the 79 questions): 10th-90th +176 (90%
+    interval -192 to +587), 5th-95th +79, 5% flat mix +28 (-32 to +93),
+    10% mix +31, 20% mix -9. Break-even out-of-range rate is 4.4-5.7%,
+    observed 6/79 = 7.6% (exact 95% 2.8-15.8%). Full table: defence brief
+    2026-11-20.
+  - Caveats: about 427 of the 10th-90th's +463 out-of-range gain is 4
+    questions; it is the best of five variants picked on the same data.
+  - Binary: leans underconfident, not significant at 95%. MLE extremizing
+    factor 1.56 (95% 0.92-2.40, includes 1; fitted in-sample); a = 1.25
+    +103 (90% -14 to +207), a = 1.5 +141. The FE-only 0.095-0.594 range
+    does not hold ledger-wide (0.015-0.900). Recheck as binaries resolve.
+- **Shifts on merged `main` (s0 item 2): done.** All 13 host shifts since
+  17 Nov 09:01 UTC passed `Test gate` (the other 10 runs were watchdog
+  checks). 21 runs since: all submitted, 0 degraded, two successful models
+  each (one referee re-run with four).
+- **Built, not pushed** (`fix/shift-robustness`, worktree
+  `/home/hatim/projects/betomcat-wt/shift-fixes`, all four gates green,
+  489 tests): `76e87a9` the periodic-snapshot task logs a failed upload and
+  retries next tick (the s0b item 6 crash: the error used to skip the
+  successor dispatch). Still open: the shift-end `do_snapshot()` in
+  `run_host`'s outer `finally` fails the same way and also skips
+  `_dispatch_successor`. Not guarded on purpose: swallowing a failed final
+  snapshot can make the next shift re-run a question and post a second
+  comment, so that trade is Hatim's call. `9f70b63` disables
+  `thinkingmachines/inkling-2-small:free` (403 "only available on agentic
+  harnesses", 9/9 since 17 Nov).
+
+### Next, in order
+
+1. **Decision: Hatim.** (a) Numeric prompt tails: keep P1..P99, move to
+   P10..P90 or P5..P95, or add a 5-10% flat mix in code. The backtest is a
+   mechanical counterfactual: models asked for fewer percentiles may state
+   them differently. (b) Binary extremizing: a code change to the
+   reconciliation that breaks the "plain weighted average" rule in the
+   defence brief s2.
+2. **Merge and push on Hatim's go:** `fix/shift-robustness` (live bot
+   change) and `build/tail-backtest` (offline module plus this session's
+   docs).
+3. s0 item 3 and s0b items 2-5 are still open (summary email, Luna fallback,
+   v2 archive, scout skill, E2-E5).
 
 ## 0. Session 2026-11-17: state and next steps
 
@@ -35,7 +92,8 @@ otherwise.
 
 ### Next, in order
 
-1. **ASAP: backtest the numeric tail fix** (Hatim, 2026-11-17; the FE
+1. **DONE 2026-11-20 (s00): backtest built and run; decision with Hatim.**
+   Original item: **ASAP: backtest the numeric tail fix** (Hatim, 2026-11-17; the FE
    numbers above make this the top performance item).
    - **Finding.** Numeric and discrete questions are 15 of the 32 scored FE
      questions and -528.6 of the -811.9. The four worst (posts 45955, 46284,
@@ -71,7 +129,7 @@ otherwise.
      binary forecasts lie in 0.095-0.594, and the losses fall where the field
      was confident and right. Compare against resolutions across all resolved
      binaries before calling it a bias.
-2. **Check the first shift on the merged `main`.** Its `Test gate` step
+2. **DONE 2026-11-20 (s00).** **Check the first shift on the merged `main`.** Its `Test gate` step
    should pass, and runs should keep two successful models.
 3. Items 2-6 of s0b below are still open (summary email, Luna fallback,
    v2 archive, scout skill, E2-E5 and the snapshot-upload crash).
@@ -164,7 +222,9 @@ a live shift yet.**
    them from memory; write it with the `writing-for-agents` skill.
 6. Then E2-E5, 5.6, 5.2, 5.5 (s2b, s5). The snapshot-upload crash fix
    (`host.py` `_periodic_snapshot` -> `state.upload_asset` on a GitHub
-   500/timeout; seen 3 and 7 Oct) is still open.
+   500/timeout; seen 3 and 7 Oct) is built on `fix/shift-robustness`
+   (s00) for the periodic path only, not yet pushed; the shift-end path
+   is open (s00).
 
 ### Later (decided 2026-10-23, design first)
 

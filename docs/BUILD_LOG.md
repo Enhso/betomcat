@@ -796,3 +796,36 @@ Decisions (defaults in force until answered):
   over a PR. Before the push, the lead covered the clean-runner check a PR's
   CI would have given: a detached checkout of `bfe7e31`, `uv sync --locked`
   with an empty `UV_CACHE_DIR`, then all four gates (488 passed).
+
+### 2026-11-20
+
+- **Tail backtest** (`7730a7f`, `build/tail-backtest`). `betomcat.backtest`
+  re-parses each resolved numeric/discrete model response with the
+  extractor helpers, filters the declared percentiles by level, rebuilds the
+  CDF with `NumericDistribution`, combines with `reconcile_numeric` and the
+  run's `draws.weight`, and scores peer as 50 * (ln m - F) with F the stored
+  `field_log_score` (exact: the field is fixed in the counterfactual).
+  Baseline follows Metaculus's `score_math.py` (reference 0.05 out of range,
+  else in-range mass over in-range bins); `weights.relative_score` was not
+  reused because its uniform-cells baseline is a different quantity.
+  Bootstrap clusters on `runs.family_id`. Results: HANDOFF s00 and the
+  defence brief 2026-11-20.
+- **No Metaculus fetch needed.** `resolutions.scaling_json` (written by the
+  weight updater) already caches each resolved question's grid and open
+  flags, which HANDOFF s0 item 1 did not know. All 79 grids are linear, so
+  zero-point inference only runs in its unit test.
+- **Version drift did not apply.** Forecasts were made under
+  forecasting-tools 0.3.1 and the venv has 0.3.6; reproduction is exact, as
+  0.3.6 only bounds the scale search on non-increasing CDFs.
+- **Lead's checks.** Re-ran the four gates (495 passed) and the backtest
+  (identical output); recomputed the p1_p99 peer total (-198.2)
+  independently from the submitted CDFs with `outcome_mass`; decomposed the
+  in-range cost (median 0; 94% of the 10th-90th variant's cost from 10
+  questions); exact binomial interval on the out-of-range rate; MLE
+  extremizing factor on the 79 binaries.
+- **Snapshot crash fix** (`76e87a9`, `fix/shift-robustness`): the guard
+  mirrors `_periodic_weight_update`. Regression test written first and seen
+  failing. **inkling-2-small:free disabled** (`9f70b63`): deterministic 403
+  on 9/9 calls. Both wait for Hatim's go to push; `main` is the live bot.
+- Team: one Sonnet builder (`pstack:poteto-agent`, medium) for the backtest;
+  the lead did the two small fixes in a worktree.
