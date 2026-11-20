@@ -9,7 +9,7 @@ what was known when.
 This repository is public. Nothing here may contain a forecast, rationale or
 claim for a question that is still open.
 
-Last updated: 2026-11-17.
+Last updated: 2026-11-20.
 
 ## 1. What betomcat is
 
@@ -122,6 +122,69 @@ tournament.
   provider running out (see 2026-10-09 below).
 
 ## 3. What the evidence says
+
+### 2026-11-20 (tail backtest; binary calibration; shifts on the merged code)
+
+**Scope.** Two measurements from the ledger snapshot of 20 Nov and one from
+the shift logs. No new Metaculus standing was read. Sections 1-2 stand: the
+prompt and the reconciliation are unchanged. The backtest is a new offline
+module (`betomcat.backtest`). It makes no model calls and changes nothing
+live.
+
+**The backtest reproduces what was scored.** It re-reads each model's saved
+response and rebuilds that model's distribution with the bot's own parser.
+It then combines the two models with their frozen weights. On all 79
+resolved numeric and discrete questions, the rebuilt distribution matches the
+submitted one exactly. The four worst FE questions each score -106.5 against
+the baseline, as the mechanism predicts. The fourth of them had an open lower
+bound at exactly $110M and resolved at $109.9M, so it too resolved out of
+range.
+
+**Wider tails would have scored better, but the sample cannot settle it.** 6
+of the 79 questions resolved outside the range (7.6%; exact 95% interval
+2.8-15.8%). Peer points against today's prompt, over all 79:
+
+| Variant | Total change | 90% interval | Out-of-range gain (6 q) | In-range cost (73 q) | Break-even out-of-range rate |
+|---|---|---|---|---|---|
+| 10th-90th percentiles | +176 | -192 to +587 | +463 | -286 | 4.8% |
+| 5th-95th percentiles | +79 | -198 to +375 | +292 | -213 | 5.7% |
+| 5% mixed with a flat distribution | +28 | -32 to +93 | +63 | -35 | 4.4% |
+| 10% mixed | +31 | -75 to +147 | +111 | -80 | 5.6% |
+| 20% mixed | -9 | -191 to +190 | +180 | -190 | 8.0% |
+
+Intervals are a bootstrap over research families (65 clusters). The in-range
+cost is concentrated in a few questions. Its median is 0, and for the
+10th-90th variant 94% of it comes from 10 questions whose outcome fell in a
+model's own outer tail. A narrower variant pays when more than about 5% of
+outcomes land out of range. The observed rate is above that, but its interval
+includes it. The narrower variants are mechanical counterfactuals. They drop
+the outer percentile lines from the saved responses. Models asked for fewer
+percentiles might state the remaining ones differently.
+
+**Binary forecasts are underconfident.** On all 79 resolved binaries, the
+24 forecasts between 0.1 and 0.3 averaged 0.17 and 1 resolved yes (4%). The
+20 forecasts between 0.5 and 0.7 averaged 0.59 and 16 resolved yes (80%).
+Pushing each forecast away from 50% on the log-odds scale (factor a) would
+have gained peer points: a = 1.25 +103 (90% interval -14 to +207), a = 1.5
++141 (-92 to +348). The best-fitting factor is 1.56 (95% interval
+0.92-2.40). Averaging two models' probabilities pulls the result toward 50%,
+which is one likely cause (inferred, not tested). Extremizing would change
+section 2's rule that the final number is the plain weighted average. That
+is a design decision, not a measurement.
+
+**Shifts on the merged code.** Every shift since the 17 Nov merge passed its
+test gate (shift logs). In the ledger, 21 runs since then are all submitted,
+none degraded, and each has two successful models. One was a referee re-run
+with four. 18 of 62 model calls failed, all on free models. One newly added
+free model rejects every call (OpenRouter serves it only to agent apps). A
+change that disables it is built but not live.
+
+**What it changes for the argument.** The tail effect is real per question
+and visible in the scored submissions. Its net size over a season depends on
+how often outcomes leave the range, and 79 questions cannot pin that rate
+down. The binary pattern is not limited to the 13 FE questions. It holds
+across all resolved binaries. Both are mechanical properties of how betomcat
+turns model answers into a submission, not research gaps.
 
 ### 2026-11-17 (FE Fall standing; the 23 Oct deployments in live shifts)
 
