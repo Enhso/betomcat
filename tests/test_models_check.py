@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import orjson
 import pytest
 import yaml
@@ -14,14 +15,17 @@ from pytest_httpx import HTTPXMock
 
 from betomcat import cli
 from betomcat.forecast import REPO_ROOT
+from betomcat.llm import OpenRouterClient
 from betomcat.models_check import (
     CATALOG_URL,
     MIN_CATALOG_ENTRIES,
     check_pool,
     fetch_catalog,
+    free_models_to_probe,
+    probe_free_models,
     run_check,
 )
-from betomcat.pool import effective_key, load_pool
+from betomcat.pool import effective_key, load_pool, parse_pool
 
 TODAY = date(2026, 10, 9)
 FIXTURE = Path(__file__).parent / "fixtures" / "openrouter_models.json"
@@ -86,6 +90,12 @@ ENABLED_IDS = [
     "openai/gpt-6-luna",
     "nvidia/nemotron-3-super-120b-a12b:free",
 ]
+
+
+@pytest.fixture(autouse=True)
+def _no_live_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the CLI from test-calling OpenRouter with a developer's real keys."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
 
 
 def _entry(
@@ -475,3 +485,101 @@ def test_cli_check_models_wires_the_options_through(
     assert capsys.readouterr().out.strip() == "added 1, disabled 0, expiring later 0"
     assert "openai/gpt-new" in pool_path.read_text("utf-8")
     assert "openai/gpt-new" in body_path.read_text("utf-8")
+
+
+def _free_pool(*ids: str) -> str:
+    blocks = "".join(
+        f"  - id: {i}\n    tier: free\n    enabled: true\n    max_tokens: 8\n"
+        f"    notes: null\n\n"
+        for i in ids
+    )
+    return f"ensemble_width: 2\n\nmodels:\n{blocks}"
+
+
+def _status_by_model(statuses: dict[str, int]) -> Any:
+    def respond(request: httpx.Request) -> httpx.Response:
+        model = orjson.loads(request.content)["model"]
+        status = statuses[model]
+        body = {"choices": [{"message": {"content": "OK"}}]} if status == 200 else {}
+        return httpx.Response(status, json=body)
+
+    return respond
+
+
+async def test_probe_reports_only_403_and_404_and_sends_the_free_key(
+    httpx_mock: HTTPXMock,
+) -> None:
+    statuses = {"a:free": 403, "b:free": 404, "c:free": 429, "d:free": 200}
+    httpx_mock.add_callback(_status_by_model(statuses), is_reusable=True)
+    models = parse_pool(_free_pool(*statuses)).models
+    client = OpenRouterClient("funded-key", "free-key")
+
+    refused = await probe_free_models(client, models)
+    await client.aclose()
+
+    assert refused == {
+        "a:free": "test call refused with HTTP 403",
+        "b:free": "test call refused with HTTP 404",
+    }
+    sent = {r.headers["authorization"] for r in httpx_mock.get_requests()}
+    assert sent == {"Bearer free-key"}
+
+
+def test_models_to_probe_are_enabled_free_entries_plus_free_additions() -> None:
+    catalog = _catalog(
+        _entry("vendor/free-new:free", prompt="0", completion="0"),
+        _entry("openai/gpt-new"),
+    )
+
+    models = free_models_to_probe(catalog, POOL_TEXT, TODAY, 1)
+
+    assert [m.id for m in models] == [
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "vendor/free-new:free",
+    ]
+
+
+def test_refused_existing_entry_is_disabled_and_other_blocks_are_untouched() -> None:
+    nemotron = "nvidia/nemotron-3-super-120b-a12b:free"
+    refused = {nemotron: "test call refused with HTTP 404"}
+
+    result = check_pool(_catalog(), POOL_TEXT, TODAY, 1, refused)
+
+    assert [(d.id, d.reason) for d in result.disabled] == [
+        (nemotron, refused[nemotron])
+    ]
+    expected = _disable_for_test(POOL_TEXT, nemotron)
+    assert result.pool_text == expected
+    note = {m.id: m for m in parse_pool(result.pool_text).models}[nemotron].notes
+    assert note is not None and "test call refused with HTTP 404" in note
+
+
+def _disable_for_test(text: str, model_id: str) -> str:
+    head, _, rest = text.partition(f"  - id: {model_id}\n")
+    block, sep, tail = rest.partition("\n\n")
+    block = block.replace("enabled: true", "enabled: false").replace(
+        'notes: "needs a \\"free\\" key; seen 2026-09-30"',
+        'notes: "needs a \\"free\\" key; seen 2026-09-30. Disabled 2026-10-09 by '
+        'the weekly model check: test call refused with HTTP 404."',
+    )
+    return f"{head}  - id: {model_id}\n{block}{sep}{tail}"
+
+
+def test_refused_addition_is_appended_disabled_and_passing_one_is_not_refused() -> None:
+    catalog = _catalog(
+        _entry("vendor/dead:free", prompt="0", completion="0", reasoning=False),
+        _entry("vendor/live:free", prompt="0", completion="0", reasoning=False),
+    )
+    refused = {"vendor/dead:free": "test call refused with HTTP 403"}
+
+    result = check_pool(catalog, POOL_TEXT, TODAY, 1, refused)
+
+    assert result.pool_text.startswith(POOL_TEXT)
+    models = {m.id: m for m in parse_pool(result.pool_text).models}
+    assert models["vendor/dead:free"].enabled is False
+    assert "Disabled 2026-10-09" in (models["vendor/dead:free"].notes or "")
+    assert "test call refused with HTTP 403" in (models["vendor/dead:free"].notes or "")
+    assert models["vendor/live:free"].enabled is True
+    assert "test call not refused" in (models["vendor/live:free"].notes or "")
+    assert [d.id for d in result.disabled] == ["vendor/dead:free"]
+    assert "- `vendor/dead:free`: test call refused with HTTP 403" in result.body

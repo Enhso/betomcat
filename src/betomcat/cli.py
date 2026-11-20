@@ -198,10 +198,31 @@ async def _cmd_pull_state(settings: Settings, out_dir: Path) -> None:
         print("no state snapshot found")
 
 
-def _cmd_check_models(pool_path: Path, body_out: Path | None) -> None:
-    from betomcat.models_check import fetch_catalog, run_check
+async def _cmd_check_models(
+    settings: Settings, pool_path: Path, body_out: Path | None
+) -> None:
+    from betomcat.models_check import (
+        fetch_catalog,
+        free_models_to_probe,
+        probe_free_models,
+        run_check,
+    )
 
-    result = run_check(pool_path, body_out, fetch_catalog(), datetime.now(UTC).date())
+    catalog = fetch_catalog()
+    today = datetime.now(UTC).date()
+    refused = None
+    if settings.openrouter_api_key:
+        client = OpenRouterClient(
+            settings.openrouter_api_key, settings.openrouter_free_api_key
+        )
+        try:
+            models = free_models_to_probe(catalog, pool_path.read_text("utf-8"), today)
+            refused = await probe_free_models(client, models)
+        finally:
+            await client.aclose()
+    else:
+        logger.warning("OPENROUTER_API_KEY not set; free models are not test-called")
+    result = run_check(pool_path, body_out, catalog, today, refused=refused)
     print(result.summary)
 
 
@@ -279,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "pull-state":
         asyncio.run(_cmd_pull_state(settings, Path(args.out_dir)))
     elif args.command == "check-models":
-        _cmd_check_models(args.pool, args.body_out)
+        asyncio.run(_cmd_check_models(settings, args.pool, args.body_out))
     elif args.command == "update-weights":
         asyncio.run(_cmd_update_weights(settings))
     return 0

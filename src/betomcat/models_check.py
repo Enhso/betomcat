@@ -9,11 +9,18 @@ reaches main until the owner merges.
 
 The pool file is edited as text so comments and formatting survive exactly;
 the parsed YAML is only read for ids, `enabled` flags and old notes.
+
+Free models the check would leave enabled get one test call through the bot's
+own client; HTTP 403 and 404 mean the model is dead for us, so those are
+disabled too. The calls live here as `probe_free_models`; `check_pool` stays
+pure and receives the refusals as an argument.
 """
 
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -23,12 +30,20 @@ import httpx
 import orjson
 import yaml
 
+from betomcat.llm import LLMError, OpenRouterClient
+from betomcat.pool import ModelSpec, parse_pool
+
+logger = logging.getLogger(__name__)
+
 CATALOG_URL = "https://openrouter.ai/api/v1/models"
 CATALOG_TIMEOUT_SECONDS = 60.0
 MIN_CATALOG_ENTRIES = 100
 # The day the pool was assembled; every model older than this was considered then.
 CANDIDATE_FLOOR = datetime(2026, 9, 22, tzinfo=UTC)
 EXPIRY_WINDOW = timedelta(days=7)
+PROBE_PROMPT = "Reply with the single word OK."
+PROBE_TIMEOUT_SECONDS = 120.0
+REFUSED_STATUSES = frozenset({403, 404})
 
 _BLOCK_START = re.compile(r"^(?=  - id: )", re.MULTILINE)
 _ID_LINE = re.compile(r"  - id: (\S+)")
@@ -255,7 +270,16 @@ def _disable_entries(text: str, notes: dict[str, str]) -> str:
     return "".join(blocks)
 
 
-def _render_addition(addition: Addition, today: date) -> str:
+def _render_addition(
+    addition: Addition, today: date, refused_reason: str | None, probed: bool
+) -> str:
+    note = (
+        f"Added by the weekly model check on {today} "
+        f"(released {addition.released}); "
+        f"{'test call not refused' if probed else 'not probed yet'}."
+    )
+    if refused_reason is not None:
+        note = _disabled_note(note, refused_reason, today)
     lines = [
         "",
         f"  - id: {addition.id}",
@@ -269,10 +293,10 @@ def _render_addition(addition: Addition, today: date) -> str:
         f"    price_in: {addition.price_in:g}",
         f"    price_out: {addition.price_out:g}",
         f"    context_tokens: {addition.context_tokens}",
-        f'    notes: "Added by the weekly model check on {today} '
-        f'(released {addition.released}); not probed yet."',
+        f"{_NOTES_PREFIX} {orjson.dumps(note).decode()}",
     ]
-    return "\n".join(lines) + "\n"
+    block = "\n".join(lines) + "\n"
+    return block if refused_reason is None else _disable_block(block, note)
 
 
 def check_pool(
@@ -280,6 +304,7 @@ def check_pool(
     pool_text: str,
     today: date,
     min_catalog_entries: int = MIN_CATALOG_ENTRIES,
+    refused: Mapping[str, str] | None = None,
 ) -> CheckResult:
     """Compute the proposed pool text for one check; pure, no I/O.
 
@@ -288,6 +313,9 @@ def check_pool(
         pool_text: Current contents of `config/models.yaml`.
         today: The date the check runs on.
         min_catalog_entries: Smallest catalog trusted as complete.
+        refused: Free model id -> reason, for models a test call was refused
+            on. `None` means no test calls were made, so free additions are
+            noted as not probed.
 
     Returns:
         The proposed text plus the additions, disablings and expiry watch list.
@@ -305,6 +333,14 @@ def check_pool(
     entries: list[dict[str, Any]] = yaml.safe_load(pool_text)["models"]
     enabled_ids = [e["id"] for e in entries if e["enabled"]]
     disabled, expiring_later = find_removals(catalog, enabled_ids, today)
+    probed = refused is not None
+    refused = refused or {}
+    already = {d.id for d in disabled}
+    disabled += [
+        Disabling(i, refused[i])
+        for i in enabled_ids
+        if i in refused and i not in already
+    ]
     additions = find_additions(catalog, {e["id"] for e in entries})
     old_notes = {e["id"]: e.get("notes") for e in entries}
     new_notes = {
@@ -313,8 +349,71 @@ def check_pool(
     text = _disable_entries(pool_text, new_notes)
     if additions:
         text = text if text.endswith("\n") else text + "\n"
-        text += "".join(_render_addition(a, today) for a in additions)
+        text += "".join(
+            _render_addition(
+                a, today, refused.get(a.id), probed=probed and a.tier == "free"
+            )
+            for a in additions
+        )
+        disabled += [
+            Disabling(a.id, refused[a.id]) for a in additions if a.id in refused
+        ]
     return CheckResult(text, text != pool_text, additions, disabled, expiring_later)
+
+
+def free_models_to_probe(
+    catalog: list[dict[str, Any]],
+    pool_text: str,
+    today: date,
+    min_catalog_entries: int = MIN_CATALOG_ENTRIES,
+) -> list[ModelSpec]:
+    """The `:free` models a check would leave enabled, as the bot would load them.
+
+    That is the enabled free entries the check does not disable plus the free
+    additions, the latter parsed from the block the check would render.
+
+    Args:
+        catalog: Parsed catalog entries.
+        pool_text: Current contents of `config/models.yaml`.
+        today: The date the check runs on.
+        min_catalog_entries: Smallest catalog trusted as complete.
+
+    Returns:
+        One spec per model to test-call.
+
+    Raises:
+        ValueError: As `check_pool`.
+    """
+    proposed = check_pool(catalog, pool_text, today, min_catalog_entries).pool_text
+    return [m for m in parse_pool(proposed).enabled_models if m.id.endswith(":free")]
+
+
+async def probe_free_models(
+    client: OpenRouterClient, models: list[ModelSpec]
+) -> dict[str, str]:
+    """Send one tiny request per model; report those OpenRouter refused.
+
+    Calls run one after another to stay clear of the free key's rate limit.
+    Only HTTP 403 and 404 count as refused; 429, 5xx, timeouts and empty
+    replies are transient and ignored.
+
+    Args:
+        client: The bot's own OpenRouter client.
+        models: Entries to call, each with its own request parameters.
+
+    Returns:
+        Refused model id -> reason.
+    """
+    refused: dict[str, str] = {}
+    for model in models:
+        try:
+            await client.complete(model, PROBE_PROMPT, PROBE_TIMEOUT_SECONDS)
+        except LLMError as exc:
+            if exc.status_code in REFUSED_STATUSES:
+                refused[model.id] = f"test call refused with HTTP {exc.status_code}"
+            else:
+                logger.warning("test call to %s inconclusive: %s", model.id, exc)
+    return refused
 
 
 def run_check(
@@ -323,6 +422,7 @@ def run_check(
     catalog: list[dict[str, Any]],
     today: date,
     min_catalog_entries: int = MIN_CATALOG_ENTRIES,
+    refused: Mapping[str, str] | None = None,
 ) -> CheckResult:
     """Check the pool file against the catalog, rewriting it only on change.
 
@@ -332,6 +432,7 @@ def run_check(
         catalog: Parsed catalog entries.
         today: The date the check runs on.
         min_catalog_entries: Smallest catalog trusted as complete.
+        refused: Test-call refusals, as for `check_pool`.
 
     Returns:
         The check result.
@@ -340,7 +441,7 @@ def run_check(
         ValueError: As `check_pool`; nothing is written in that case.
     """
     result = check_pool(
-        catalog, pool_path.read_text("utf-8"), today, min_catalog_entries
+        catalog, pool_path.read_text("utf-8"), today, min_catalog_entries, refused
     )
     if result.changed:
         pool_path.write_text(result.pool_text, "utf-8")
