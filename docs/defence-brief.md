@@ -77,6 +77,14 @@ Nothing overrides that arithmetic. A planned "referee" may classify why two
 models disagree and order more research, but it can never change the number.
 Every forecast can be audited, and no faulty component can bend a submission.
 
+**Numeric forecasts state the 10th to 90th percentiles.** The models give
+seven percentiles, and the conversion to Metaculus's format places 5% of
+probability beyond each open bound of the question's range. Until 20 Nov the
+models gave the 1st to 99th, which left 0.6% there, so any outcome outside the
+range scored about -106 against the baseline. Price: when the outcome lands in
+range but in a model's outer tail, the distribution gives it less probability
+than before (backtest in section 3, 2026-11-20).
+
 **Expensive models only for the two forecasts.** Claim extraction, scoring,
 family tags and the comment all run on cheap or free models. The whole budget
 is $100 of OpenRouter credit from Metaculus.
@@ -126,10 +134,12 @@ tournament.
 ### 2026-11-20 (tail backtest; binary calibration; shifts on the merged code)
 
 **Scope.** Two measurements from the ledger snapshot of 20 Nov and one from
-the shift logs. No new Metaculus standing was read. Sections 1-2 stand: the
-prompt and the reconciliation are unchanged. The backtest is a new offline
-module (`betomcat.backtest`). It makes no model calls and changes nothing
-live.
+the shift logs. No new Metaculus standing was read. The backtest is an
+offline module (`betomcat.backtest`) that makes no model calls. On its
+result Hatim moved the numeric prompt to the 10th-90th percentiles the same
+day (section 2). Binary extremizing was not adopted. Two robustness changes
+also went live: snapshot uploads now retry, and the weekly model check
+test-calls free models and proposes disabling any that OpenRouter refuses.
 
 **The backtest reproduces what was scored.** It re-reads each model's saved
 response and rebuilds that model's distribution with the bot's own parser.
@@ -185,8 +195,8 @@ watchdog checks that found the chain alive. In the ledger, 21 runs since
 then are all submitted,
 none degraded, and each has two successful models. One was a referee re-run
 with four. 18 of 62 model calls failed, all on free models. One newly added
-free model rejects every call (OpenRouter serves it only to agent apps). A
-change that disables it is built but not live.
+free model rejects every call (OpenRouter serves it only to agent apps). It
+is now disabled.
 
 **What it changes for the argument.** The tail effect is real per question
 and visible in the scored submissions. Its net size over a season depends on

@@ -13,7 +13,34 @@ says otherwise.
 
 ### Where things stand
 
-- **Tail backtest built** (`7730a7f` on `build/tail-backtest`, not merged).
+- **Live on `main`** (all pushed 20 Nov on Hatim's go; each takes effect
+  from the next shift or the next Monday model check):
+  - **Numeric prompt asks for P10..P90** (`5751601`, Hatim chose it from
+    the backtest below). The pre-mortem step now puts structural surprises
+    beyond P10/P90 so models keep those points at one-in-ten, which is
+    what the backtest assumed. A seven-line answer leaves 5.04% beyond
+    each open bound. **Watch:** after enough new numeric questions
+    resolve, rerun the backtest. Its `p1_p99` row scores what was
+    submitted, so on new answers it measures the new prompt; the
+    narrower variants become no-ops there.
+  - **Snapshot robustness.** `76e87a9`: the periodic-snapshot task logs a
+    failed upload and retries next tick. `4f13bf5`: every snapshot upload
+    retries up to 3 times, 5 s apart, each under a fresh timestamped name.
+    Correction to the morning's claim: the 3 and 7 Oct crash never
+    stranded the chain. `host.yml`'s fallback step dispatches the
+    successor when the host step fails. The real harm was lost state:
+    no periodic snapshots after the crash, and a failed final upload
+    meant the next shift started from older state (possible redo of a
+    question and a second comment). s0b item 6 is closed.
+  - **Weekly model check test-calls free models** (`be2c0a2`, `39cb228`):
+    one call per `:free` model it would leave enabled, through the bot's
+    own client and keys; HTTP 403/404 proposes the model disabled in the
+    PR. 429/5xx/timeouts change nothing. `models.yml` now passes both
+    OpenRouter secrets. One live run on 20 Nov: 8 free models called,
+    none refused. `inkling-2-small:free` disabled by hand (`9f70b63`).
+  - **Read-only ledger** (`d489112`): `Ledger(path, read_only=True)`; the
+    backtest reads through it (outputs byte-identical).
+- **Tail backtest** (`7730a7f`).
   `uv run python -m betomcat.backtest --ledger <pulled>/ledger.sqlite --out
   <scratch dir> --check-posts 45955,46284,46195,45961`. Ledger only: no
   network, no LLM. Output holds private ledger data, so keep it out of the
@@ -40,31 +67,14 @@ says otherwise.
   17 Nov 09:01 UTC passed `Test gate` (the other 10 runs were watchdog
   checks). 21 runs since: all submitted, 0 degraded, two successful models
   each (one referee re-run with four).
-- **Built, not pushed** (`fix/shift-robustness`, worktree
-  `/home/hatim/projects/betomcat-wt/shift-fixes`, all four gates green,
-  489 tests): `76e87a9` the periodic-snapshot task logs a failed upload and
-  retries next tick (the s0b item 6 crash: the error used to skip the
-  successor dispatch). Still open: the shift-end `do_snapshot()` in
-  `run_host`'s outer `finally` fails the same way and also skips
-  `_dispatch_successor`. Not guarded on purpose: swallowing a failed final
-  snapshot can make the next shift re-run a question and post a second
-  comment, so that trade is Hatim's call. `9f70b63` disables
-  `thinkingmachines/inkling-2-small:free` (403 "only available on agentic
-  harnesses", 9/9 since 17 Nov).
 
 ### Next, in order
 
-1. **Decision: Hatim.** (a) Numeric prompt tails: keep P1..P99, move to
-   P10..P90 or P5..P95, or add a 5-10% flat mix in code. The backtest is a
-   mechanical counterfactual: models asked for fewer percentiles may state
-   them differently. (b) Binary extremizing: a code change to the
-   reconciliation that breaks the "plain weighted average" rule in the
-   defence brief s2.
-2. **Merge and push on Hatim's go:** `fix/shift-robustness` (live bot
-   change) and `build/tail-backtest` (offline module plus this session's
-   docs).
-3. s0 item 3 and s0b items 2-5 are still open (summary email, Luna fallback,
-   v2 archive, scout skill, E2-E5).
+1. **Binary extremizing: not acted on** (Hatim, 20 Nov: P10..P90 only).
+   Rerun the backtest's binary section as binaries resolve; the lean is
+   not significant yet.
+2. s0 item 3 and s0b items 2-5 are still open (summary email, Luna
+   fallback, v2 archive, scout skill, E2-E5).
 
 ## 0. Session 2026-11-17: state and next steps
 
@@ -222,9 +232,7 @@ a live shift yet.**
    them from memory; write it with the `writing-for-agents` skill.
 6. Then E2-E5, 5.6, 5.2, 5.5 (s2b, s5). The snapshot-upload crash fix
    (`host.py` `_periodic_snapshot` -> `state.upload_asset` on a GitHub
-   500/timeout; seen 3 and 7 Oct) is built on `fix/shift-robustness`
-   (s00) for the periodic path only, not yet pushed; the shift-end path
-   is open (s00).
+   500/timeout; seen 3 and 7 Oct) is done and live (s00).
 
 ### Later (decided 2026-10-23, design first)
 

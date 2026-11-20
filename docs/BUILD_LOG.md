@@ -829,3 +829,27 @@ Decisions (defaults in force until answered):
   on 9/9 calls. Both wait for Hatim's go to push; `main` is the live bot.
 - Team: one Sonnet builder (`pstack:poteto-agent`, medium) for the backtest;
   the lead did the two small fixes in a worktree.
+- **Hatim's decisions (20 Nov, afternoon):** numeric prompt to P10..P90;
+  push and merge both branches; fix the shift-end snapshot; test-call free
+  models in the weekly check; a read-only Ledger. Binary extremizing not
+  taken up.
+- **Correction.** The morning's account of the 3/7 Oct snapshot crash said
+  its error skipped the successor dispatch and left the chain to the
+  30-minute watchdog. Wrong: `host.yml`'s "Dispatch successor if the host
+  step did not already" step dispatches whenever the host step fails. The
+  crash cost periodic snapshots for the rest of the shift and a red job.
+  The same holds for a failed shift-end snapshot, whose real cost is state
+  lost since the last periodic snapshot. So the fix is a retry
+  (`4f13bf5`), not a guard: swallowing the error would only turn the job
+  green and hide the loss. Missed because the lead read `host.py` and not
+  the workflow that runs it.
+- **Prompt** (`5751601`). Steps 6-7 and the answer format only. The
+  pre-mortem now says structural surprises belong beyond P10/P90, so the
+  models' P10/P90 stay one-in-ten as the backtest assumed rather than
+  drifting out to the old P1/P99.
+- **Model-check test calls** (`be2c0a2` by a Sonnet builder; `39cb228` lead
+  fix: a refused addition's note said "test call not refused" before its
+  disabled sentence, and the test did not assert the absence). `LLMError`
+  gains `status_code`; `pool.parse_pool` split out of `load_pool`.
+- **Read-only Ledger** (`d489112`), answering snag 110's repeat.
+- Gates on the merged branch: 503 passed.
