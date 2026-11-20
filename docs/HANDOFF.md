@@ -30,17 +30,25 @@ says otherwise.
     10% mix +31, 20% mix -9. Break-even out-of-range rate is 4.4-5.7%,
     observed 6/79 = 7.6% (exact 95% 2.8-15.8%). Full table: defence brief
     2026-11-20.
-  - Binary: underconfident across all 79 resolved binaries. MLE extremizing
-    factor 1.56 (95% 0.92-2.40); a = 1.25 +103 (90% -14 to +207),
-    a = 1.5 +141.
-- **Shifts on merged `main` (s0 item 2): done.** Every host shift since
-  17 Nov 09:01 UTC passed `Test gate`. 21 runs since: all submitted, 0
-  degraded, two successful models each (one referee re-run with four).
+  - Caveats: about 427 of the 10th-90th's +463 out-of-range gain is 4
+    questions; it is the best of five variants picked on the same data.
+  - Binary: leans underconfident, not significant at 95%. MLE extremizing
+    factor 1.56 (95% 0.92-2.40, includes 1; fitted in-sample); a = 1.25
+    +103 (90% -14 to +207), a = 1.5 +141. The FE-only 0.095-0.594 range
+    does not hold ledger-wide (0.015-0.900). Recheck as binaries resolve.
+- **Shifts on merged `main` (s0 item 2): done.** All 13 host shifts since
+  17 Nov 09:01 UTC passed `Test gate` (the other 10 runs were watchdog
+  checks). 21 runs since: all submitted, 0 degraded, two successful models
+  each (one referee re-run with four).
 - **Built, not pushed** (`fix/shift-robustness`, worktree
   `/home/hatim/projects/betomcat-wt/shift-fixes`, all four gates green,
   489 tests): `76e87a9` the periodic-snapshot task logs a failed upload and
   retries next tick (the s0b item 6 crash: the error used to skip the
-  successor dispatch); `9f70b63` disables
+  successor dispatch). Still open: the shift-end `do_snapshot()` in
+  `run_host`'s outer `finally` fails the same way and also skips
+  `_dispatch_successor`. Not guarded on purpose: swallowing a failed final
+  snapshot can make the next shift re-run a question and post a second
+  comment, so that trade is Hatim's call. `9f70b63` disables
   `thinkingmachines/inkling-2-small:free` (403 "only available on agentic
   harnesses", 9/9 since 17 Nov).
 
@@ -215,7 +223,8 @@ a live shift yet.**
 6. Then E2-E5, 5.6, 5.2, 5.5 (s2b, s5). The snapshot-upload crash fix
    (`host.py` `_periodic_snapshot` -> `state.upload_asset` on a GitHub
    500/timeout; seen 3 and 7 Oct) is built on `fix/shift-robustness`
-   (s00), not yet pushed.
+   (s00) for the periodic path only, not yet pushed; the shift-end path
+   is open (s00).
 
 ### Later (decided 2026-10-23, design first)
 

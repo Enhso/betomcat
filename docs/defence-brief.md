@@ -152,28 +152,37 @@ of the 79 questions resolved outside the range (7.6%; exact 95% interval
 | 10% mixed | +31 | -75 to +147 | +111 | -80 | 5.6% |
 | 20% mixed | -9 | -191 to +190 | +180 | -190 | 8.0% |
 
-Intervals are a bootstrap over research families (65 clusters). The in-range
-cost is concentrated in a few questions. Its median is 0, and for the
-10th-90th variant 94% of it comes from 10 questions whose outcome fell in a
-model's own outer tail. A narrower variant pays when more than about 5% of
-outcomes land out of range. The observed rate is above that, but its interval
-includes it. The narrower variants are mechanical counterfactuals. They drop
+Intervals are a bootstrap over research families (65 clusters). Both sides
+of the trade are concentrated. About 427 of the 10th-90th variant's +463
+out-of-range gain comes from the 4 questions that had 0.594% beyond the
+bound. The in-range cost has a median of 0, and 94% of it comes from 10
+questions. In 9 of those 10, the outcome fell outside at least one model's
+10th-90th range. A narrower variant pays when more than about 5% of outcomes
+land out of range. The observed rate is above that, but its interval
+includes it. The 10th-90th variant is also the best of five chosen on the
+same data. The narrower variants are mechanical counterfactuals. They drop
 the outer percentile lines from the saved responses. Models asked for fewer
 percentiles might state the remaining ones differently.
 
-**Binary forecasts are underconfident.** On all 79 resolved binaries, the
-24 forecasts between 0.1 and 0.3 averaged 0.17 and 1 resolved yes (4%). The
-20 forecasts between 0.5 and 0.7 averaged 0.59 and 16 resolved yes (80%).
-Pushing each forecast away from 50% on the log-odds scale (factor a) would
-have gained peer points: a = 1.25 +103 (90% interval -14 to +207), a = 1.5
-+141 (-92 to +348). The best-fitting factor is 1.56 (95% interval
-0.92-2.40). Averaging two models' probabilities pulls the result toward 50%,
-which is one likely cause (inferred, not tested). Extremizing would change
-section 2's rule that the final number is the plain weighted average. That
-is a design decision, not a measurement.
+**Binary forecasts lean underconfident, short of significance.** The full
+ledger does not show the narrow range seen on the 13 FE questions:
+forecasts span 0.015-0.900. On all 79 resolved binaries, the 24 forecasts
+between 0.1 and 0.3 averaged 0.17 and 1 resolved yes (4%). The 20 forecasts
+between 0.5 and 0.7 averaged 0.59 and 16 resolved yes (80%). Pushing each
+forecast away from 50% on the log-odds scale (factor a) would have gained
+peer points: a = 1.25 +103 (90% interval -14 to +207), a = 1.5 +141 (-92
+to +348). The best-fitting factor is 1.56, but its 95% interval
+(0.92-2.40) includes 1, no change, and it was fitted on the same 79
+questions it is scored on. Averaging two models' probabilities pulls the
+result toward 50%, which would produce this lean (inferred, not tested).
+Extremizing would change section 2's rule that the final number is the
+plain weighted average. That is a design decision, and the evidence for it
+is not yet conclusive.
 
-**Shifts on the merged code.** Every shift since the 17 Nov merge passed its
-test gate (shift logs). In the ledger, 21 runs since then are all submitted,
+**Shifts on the merged code.** All 13 host shifts since the 17 Nov merge
+passed their test gate (shift logs). The other 10 runs in that window were
+watchdog checks that found the chain alive. In the ledger, 21 runs since
+then are all submitted,
 none degraded, and each has two successful models. One was a referee re-run
 with four. 18 of 62 model calls failed, all on free models. One newly added
 free model rejects every call (OpenRouter serves it only to agent apps). A
@@ -182,9 +191,10 @@ change that disables it is built but not live.
 **What it changes for the argument.** The tail effect is real per question
 and visible in the scored submissions. Its net size over a season depends on
 how often outcomes leave the range, and 79 questions cannot pin that rate
-down. The binary pattern is not limited to the 13 FE questions. It holds
-across all resolved binaries. Both are mechanical properties of how betomcat
-turns model answers into a submission, not research gaps.
+down. On binaries, the full ledger shows a lean toward underconfidence that
+is consistent with averaging two models but is not significant at 95%; it
+needs rechecking as more binaries resolve. Both point at how betomcat turns
+model answers into a submission rather than at research gaps.
 
 ### 2026-11-17 (FE Fall standing; the 23 Oct deployments in live shifts)
 
