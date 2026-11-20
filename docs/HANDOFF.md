@@ -70,10 +70,15 @@ says otherwise.
 
 ### Next, in order
 
-1. **Binary extremizing: not acted on** (Hatim, 20 Nov: P10..P90 only).
+1. **Check the first shift on `634bf03`** (starts about 13:15 UTC 20 Nov;
+   CI on that commit was green). Its `Test gate` passes, and numeric runs
+   parse the seven-line answers: no rise in `Couldn't extract numeric
+   distribution` errors in `model_forecasts`, and stored CDFs show about
+   0.05 beyond open bounds (`cdf[0]`, `1 - cdf[-1]`).
+2. **Binary extremizing: not acted on** (Hatim, 20 Nov: P10..P90 only).
    Rerun the backtest's binary section as binaries resolve; the lean is
    not significant yet.
-2. s0 item 3 and s0b items 2-5 are still open (summary email, Luna
+3. s0 item 3 and s0b items 2-5 are still open (summary email, Luna
    fallback, v2 archive, scout skill, E2-E5).
 
 ## 0. Session 2026-11-17: state and next steps
