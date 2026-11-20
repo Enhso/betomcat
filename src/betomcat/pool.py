@@ -108,8 +108,19 @@ def load_pool(path: Path | str) -> PoolConfig:
     Returns:
         The parsed pool config.
     """
-    with open(path, "rb") as f:
-        raw = yaml.safe_load(f)
+    return parse_pool(Path(path).read_bytes())
+
+
+def parse_pool(text: str | bytes) -> PoolConfig:
+    """Parse pool YAML text into a `PoolConfig`.
+
+    Args:
+        text: Contents of a pool YAML file.
+
+    Returns:
+        The parsed pool config.
+    """
+    raw = yaml.safe_load(text)
     models = [
         ModelSpec(
             id=entry["id"],
