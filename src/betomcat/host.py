@@ -213,8 +213,8 @@ async def _periodic_snapshot(
         try:
             await snapshot()
         except Exception:
-            # A GitHub 500 or timeout once killed this task, and its error
-            # then skipped the successor dispatch at shift end (3 and 7 Oct).
+            # A GitHub 500 or timeout once killed this task (3 and 7 Oct),
+            # ending periodic snapshots for the rest of the shift.
             logger.exception("periodic snapshot failed; retrying on the next tick")
 
 

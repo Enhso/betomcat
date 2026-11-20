@@ -36,6 +36,29 @@ def test_question_upsert_and_get(tmp_path: Path) -> None:
         ledger.close()
 
 
+def test_read_only_ledger_reads_rows_and_refuses_writes(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.sqlite"
+    with Ledger(path) as ledger:
+        ledger.upsert_question("metaculus:1", "Will X?", "binary", None, None)
+
+    with Ledger(path, read_only=True) as snapshot:
+        question = snapshot.get_question("metaculus:1")
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            snapshot.upsert_question("metaculus:2", "Will Y?", "binary", None, None)
+
+    assert question is not None
+    assert question["title"] == "Will X?"
+
+
+def test_read_only_ledger_never_creates_a_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "absent" / "ledger.sqlite"
+
+    with pytest.raises(sqlite3.OperationalError):
+        Ledger(path, read_only=True)
+
+    assert not path.parent.exists()
+
+
 def test_has_run(tmp_path: Path) -> None:
     ledger = Ledger(tmp_path / "ledger.sqlite")
     try:

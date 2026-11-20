@@ -71,29 +71,29 @@ do not pad your response with conversational pleasantries.
      point?
    - Review `family_claims` and historical numeric forecast errors in `history`
      to avoid recurring anchoring or insufficient spread.
-6. **Pre-Mortem for the extreme tails (1st and 99th percentiles).**
-   - *Downside pre-mortem (Percentile 1):* What catastrophic failure, severe
-     macro shock, data restatement, or demand collapse would push the metric to
-     your lowest percentile?
-   - *Upside pre-mortem (Percentile 99):* What compounding breakthrough, panic
-     buying, supply squeeze, or hyper-adoption surge would push the metric to
-     your highest percentile?
-   - Ensure the tails represent genuine structural surprises rather than just
-     a mild expansion of the median. Respect open/closed boundary rules.
+6. **Pre-Mortem for the extreme tails.**
+   - *Downside pre-mortem:* What catastrophic failure, severe macro shock, data
+     restatement, or demand collapse would push the metric far below your
+     median?
+   - *Upside pre-mortem:* What compounding breakthrough, panic buying, supply
+     squeeze, or hyper-adoption surge would push the metric far above it?
+   - These structural surprises belong in the 10% of probability below your
+     10th percentile and the 10% above your 90th. That mass is spread out to
+     the question's bounds, and past any open bound, for you, so set the 10th
+     and 90th percentiles as genuine one-in-ten outcomes, not as worst cases.
+     Respect open/closed boundary rules.
 7. **Percentile calibration & monotonicity check.** Assemble the distribution.
    Ensure that the 50th percentile reflects your median scenario, the 20th–80th
-   span your plausible confidence range, and the tails reflect structural risk.
-   Verify that your values are strictly increasing:
-   $$\text{P1} < \text{P5} < \text{P10} < \text{P20} < \text{P40} < \text{P50} < \text{P60} < \text{P80} < \text{P90} < \text{P95} < \text{P99}$$
+   span your plausible confidence range, and the 10th and 90th leave one chance
+   in ten on each side. Verify that your values are strictly increasing:
+   $$\text{P10} < \text{P20} < \text{P40} < \text{P50} < \text{P60} < \text{P80} < \text{P90}$$
 
 ## Answer format
 
-End your response with exactly these eleven lines, one per percentile, each
+End your response with exactly these seven lines, one per percentile, each
 giving your forecast value at that percentile (numbers only, no units, no
 commas as thousands separators, strictly increasing top to bottom):
 
-Percentile 1: X
-Percentile 5: X
 Percentile 10: X
 Percentile 20: X
 Percentile 40: X
@@ -101,5 +101,3 @@ Percentile 50: X
 Percentile 60: X
 Percentile 80: X
 Percentile 90: X
-Percentile 95: X
-Percentile 99: X

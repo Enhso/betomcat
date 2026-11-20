@@ -1,7 +1,8 @@
 # Weekly model-pool check. Compares OpenRouter's public model catalog with
 # config/models.yaml (`betomcat check-models`): new OpenAI/Anthropic releases
 # and :free models are proposed as additions, enabled entries that vanished
-# from the catalog or expire within a week are proposed as disablings. The
+# from the catalog or expire within a week are proposed as disablings, as are
+# free models that a tiny test call finds refused with HTTP 403 or 404. The
 # result goes into a pull request rather than straight to main so the owner
 # decides by merging; the live shifts (host.yml) re-read the pool file, so a
 # merge takes effect from the next shift. The branch is force-pushed and its
@@ -35,6 +36,9 @@ jobs:
         run: uv sync
 
       - name: Compare the pool with the OpenRouter catalog
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_FREE_API_KEY: ${{ secrets.OPENROUTER_FREE_API_KEY }}
         run: uv run betomcat check-models --body-out "$RUNNER_TEMP/pr-body.md"
 
       - name: Open or update the proposal pull request

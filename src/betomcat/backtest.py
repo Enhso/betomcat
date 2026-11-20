@@ -24,11 +24,11 @@ import logging
 import math
 import random
 import re
-import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import orjson
 from forecasting_tools.data_models.numeric_report import (
@@ -37,6 +37,7 @@ from forecasting_tools.data_models.numeric_report import (
 )
 from forecasting_tools.helpers.prediction_extractor import PredictionExtractor
 
+from betomcat.ledger import Ledger
 from betomcat.reconcile import reconcile_numeric
 from betomcat.weights import ABOVE_UPPER_BOUND, BELOW_LOWER_BOUND, Scaling, outcome_mass
 
@@ -365,36 +366,6 @@ def _post_id(url: str | None) -> str:
     return match.group(1) if match else ""
 
 
-def _connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def _latest_run(connection: sqlite3.Connection, question_id: str) -> sqlite3.Row | None:
-    row: sqlite3.Row | None = connection.execute(
-        """
-        SELECT runs.id, runs.family_id FROM runs
-        WHERE runs.question_id = ?
-          AND EXISTS (SELECT 1 FROM submissions WHERE run_id = runs.id)
-        ORDER BY runs.id DESC LIMIT 1
-        """,
-        (question_id,),
-    ).fetchone()
-    return row
-
-
-def _scored_submission(connection: sqlite3.Connection, run_id: int) -> object:
-    """The run's latest `final` submission's forecast, else its latest one."""
-    rows = connection.execute(
-        "SELECT kind, forecast_json FROM submissions WHERE run_id = ? ORDER BY id",
-        (run_id,),
-    ).fetchall()
-    finals = [r for r in rows if r["kind"] == "final"]
-    chosen = (finals or rows)[-1]
-    return orjson.loads(chosen["forecast_json"])
-
-
 @dataclass(frozen=True)
 class BinaryCase:
     """A resolved binary question with the probability that was scored."""
@@ -407,84 +378,97 @@ class BinaryCase:
     field_log_score: float
 
 
-def _resolved_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
-    return connection.execute(
-        """
-        SELECT q.question_id, q.url, r.resolution, r.field_log_score, r.scaling_json
-        FROM questions q JOIN resolutions r ON r.question_id = q.question_id
-        WHERE r.status = 'resolved' AND r.field_log_score IS NOT NULL
-        ORDER BY q.question_id
-        """
-    ).fetchall()
+def _scored_submission(submissions: Sequence[dict[str, Any]]) -> object:
+    """The latest `final` submission's forecast, else the latest submission's."""
+    finals = [s for s in submissions if s["kind"] == "final"]
+    return orjson.loads((finals or submissions)[-1]["forecast_json"])
 
 
-def _stored_forecasts(
-    connection: sqlite3.Connection, run_id: int
-) -> list[StoredForecast]:
-    rows = connection.execute(
-        """
-        SELECT id, model_id, rationale, forecast_json FROM model_forecasts
-        WHERE run_id = ? AND status = 'ok' AND forecast_json IS NOT NULL
-        ORDER BY id
-        """,
-        (run_id,),
-    ).fetchall()
-    return [
-        StoredForecast(
-            r["id"],
-            r["model_id"],
-            r["rationale"] or "",
-            orjson.loads(r["forecast_json"]),
-        )
-        for r in rows
-    ]
+def _latest_submitted_run(
+    ledger: Ledger, question_id: str
+) -> tuple[int, list[dict[str, Any]]] | None:
+    """The newest run of `question_id` that has submissions, with them."""
+    forecasts = ledger.get_model_forecasts_for_question(question_id)
+    for run_id in sorted({f["run_id"] for f in forecasts}, reverse=True):
+        submissions = ledger.get_submissions(run_id)
+        if submissions:
+            return run_id, submissions
+    return None
 
 
 def load_cases(path: Path) -> tuple[list[Case], list[BinaryCase], Counter[str]]:
     """Resolved numeric/discrete cases, resolved binaries, and counted skips.
 
-    Date questions and other types are skipped and counted, never scored.
-    A question with several runs uses the latest run that has a submission.
+    Opens the ledger read-only. Date questions and other types are skipped and
+    counted, never scored. A question with several runs uses the latest run
+    that has a submission.
     """
     skipped: Counter[str] = Counter()
     cases: list[Case] = []
     binaries: list[BinaryCase] = []
-    with _connect(path) as connection:
-        for row in _resolved_rows(connection):
-            scaling: Scaling = orjson.loads(row["scaling_json"])
+    with Ledger(path, read_only=True) as ledger:
+        for question in ledger.forecasted_questions():
+            question_id = question["question_id"]
+            resolution = ledger.get_resolution(question_id)
+            if (
+                resolution is None
+                or resolution["status"] != "resolved"
+                or resolution["field_log_score"] is None
+            ):
+                continue
+            scaling: Scaling = orjson.loads(resolution["scaling_json"])
             kind = scaling["type"]
             if kind not in ("numeric", "discrete", "binary"):
                 skipped[f"type_{kind}"] += 1
                 continue
-            run = _latest_run(connection, row["question_id"])
-            if run is None:
+            latest = _latest_submitted_run(ledger, question_id)
+            if latest is None:
                 skipped["no_submission"] += 1
                 continue
-            submitted = _scored_submission(connection, run["id"])
-            family = run["family_id"] or row["question_id"]
-            post_id = _post_id(row["url"])
+            run_id, submissions = latest
+            submitted = _scored_submission(submissions)
+            family = (ledger.get_run(run_id) or {}).get("family_id") or question_id
+            post_id = _post_id(question["url"])
             if kind == "binary":
                 binaries.append(
                     BinaryCase(
-                        row["question_id"], post_id, family, float(submitted),  # type: ignore[arg-type]
-                        row["resolution"], row["field_log_score"],
+                        question_id,
+                        post_id,
+                        family,
+                        float(submitted),  # type: ignore[arg-type]
+                        resolution["resolution"],
+                        resolution["field_log_score"],
                     )
-                )  # fmt: skip
+                )
                 continue
-            draws = connection.execute(
-                "SELECT model_id, weight FROM draws WHERE run_id = ?", (run["id"],)
-            ).fetchall()
-            forecasts = _stored_forecasts(connection, run["id"])
+            forecasts = [
+                StoredForecast(
+                    f["id"],
+                    f["model_id"],
+                    f["rationale"] or "",
+                    orjson.loads(f["forecast_json"]),
+                )
+                for f in ledger.get_model_forecasts(run_id)
+                if f["status"] == "ok" and f["forecast_json"] is not None
+            ]
             if not forecasts or not isinstance(submitted, list):
                 skipped["no_forecast"] += 1
                 continue
+            weights = {d["model_id"]: d["weight"] for d in ledger.get_draws(run_id)}
             cases.append(
                 Case(
-                    row["question_id"], post_id, family, kind, scaling,
-                    row["resolution"], row["field_log_score"], forecasts,
-                    {d["model_id"]: d["weight"] for d in draws}, submitted,
+                    question_id,
+                    post_id,
+                    family,
+                    kind,
+                    scaling,
+                    resolution["resolution"],
+                    resolution["field_log_score"],
+                    forecasts,
+                    weights,
+                    submitted,
                 )
-            )  # fmt: skip
+            )
     return cases, binaries, skipped
 
 

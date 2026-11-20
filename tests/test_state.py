@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
 from cryptography.fernet import Fernet
 from pytest_httpx import HTTPXMock
 
@@ -134,6 +135,40 @@ async def test_snapshot_and_upload_uploads_before_deleting_and_keeps_three(
     # Upload must happen before delete: never a window with zero snapshots.
     assert [r.method for r in requests] == ["GET", "POST", "DELETE"]
     assert requests[2].url.path.endswith("/releases/assets/1")
+
+
+async def test_snapshot_and_upload_retries_a_failed_upload_under_a_new_name(
+    httpx_mock: HTTPXMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "weights.json").write_text("{}")
+    stamps = iter(["20261120T090000Z", "20261120T090005Z"])
+    monkeypatch.setattr("betomcat.state._timestamp", lambda: next(stamps))
+    monkeypatch.setattr("betomcat.state.UPLOAD_RETRY_SECONDS", 0)
+    httpx_mock.add_response(method="GET", url=RELEASES_LIST_URL, json=[_draft(100, [])])
+    httpx_mock.add_response(method="POST", status_code=500)
+    httpx_mock.add_response(
+        method="POST", json={"id": 5, "name": "state-20261120T090005Z.enc"}
+    )
+
+    releases = GitHubReleases(REPO, "gh-token")
+    try:
+        uploaded_name = await snapshot_and_upload(
+            releases,
+            data_dir=data_dir,
+            iw_db_path=data_dir / "iw.sqlite",
+            key=Fernet.generate_key(),
+        )
+    finally:
+        await releases.aclose()
+
+    assert uploaded_name == "state-20261120T090005Z.enc"
+    posts = [r for r in httpx_mock.get_requests() if r.method == "POST"]
+    assert [r.url.params["name"] for r in posts] == [
+        "state-20261120T090000Z.enc",
+        "state-20261120T090005Z.enc",
+    ]
 
 
 async def test_restore_latest_with_no_release_starts_fresh(

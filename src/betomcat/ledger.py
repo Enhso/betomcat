@@ -156,8 +156,23 @@ class RunHandle:
 class Ledger:
     """The bot's per-question audit trail."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, read_only: bool = False) -> None:
+        """Open the ledger at `path`, creating or migrating it as needed.
+
+        Args:
+            path: The SQLite file.
+            read_only: Open an existing file without creating, migrating or
+                writing anything, for analysis of a pulled snapshot.
+
+        Raises:
+            sqlite3.OperationalError: If `read_only` and the file is missing.
+        """
         self._path = Path(path)
+        if read_only:
+            uri = f"{self._path.resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True)
+            self._conn.row_factory = sqlite3.Row
+            return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._path)
         self._conn.row_factory = sqlite3.Row

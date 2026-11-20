@@ -31,7 +31,15 @@ GOOGLE_MODEL_PREFIX = "google/"
 
 
 class LLMError(Exception):
-    """Raised on an HTTP error, a missing key, or an empty/malformed response."""
+    """Raised on an HTTP error, a missing key, or an empty/malformed response.
+
+    `status_code` is the HTTP status when the failure was an HTTP error
+    response, otherwise `None`.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -124,7 +132,8 @@ class OpenRouterClient:
 
         if response.status_code >= 400:
             raise LLMError(
-                f"{model.id}: HTTP {response.status_code}: {response.text[:500]}"
+                f"{model.id}: HTTP {response.status_code}: {response.text[:500]}",
+                status_code=response.status_code,
             )
 
         data = response.json()
