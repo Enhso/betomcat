@@ -19,6 +19,7 @@ from betomcat.host import (
     _dispatch_successor,
     _iw_env,
     _MutableFlag,
+    _periodic_snapshot,
     _periodic_weight_update,
     _RedactingFilter,
     _shift_margins,
@@ -383,6 +384,33 @@ async def test_weight_task_logs_a_failure_and_retries_on_the_next_tick(
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert [r.getMessage() for r in errors] == [
         "weight update failed; retrying on the next tick"
+    ]
+
+
+async def test_snapshot_task_logs_a_failed_upload_and_keeps_snapshotting(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("betomcat.host.SNAPSHOT_INTERVAL_SECONDS", 0.01)
+    attempts: list[int] = []
+
+    async def snapshot() -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise httpx.ReadTimeout("GitHub upload timed out")
+
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(
+        _periodic_snapshot(stop_event=stop_event, snapshot=snapshot)
+    )
+    with caplog.at_level(logging.ERROR):
+        await asyncio.sleep(0.1)
+        stop_event.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    assert len(attempts) > 1
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == [
+        "periodic snapshot failed; retrying on the next tick"
     ]
 
 

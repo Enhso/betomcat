@@ -208,8 +208,14 @@ async def _periodic_snapshot(
     while not stop_event.is_set():
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop_event.wait(), timeout=SNAPSHOT_INTERVAL_SECONDS)
-        if not stop_event.is_set():
+        if stop_event.is_set():
+            break
+        try:
             await snapshot()
+        except Exception:
+            # A GitHub 500 or timeout once killed this task, and its error
+            # then skipped the successor dispatch at shift end (3 and 7 Oct).
+            logger.exception("periodic snapshot failed; retrying on the next tick")
 
 
 async def _periodic_weight_update(
