@@ -19,6 +19,7 @@ plain files, copied directly.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import sqlite3
@@ -37,6 +38,8 @@ GITHUB_API = "https://api.github.com"
 UPLOADS_API = "https://uploads.github.com"
 RELEASE_TAG = "state"
 KEEP_ASSETS = 3
+UPLOAD_ATTEMPTS = 3
+UPLOAD_RETRY_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -226,14 +229,32 @@ async def snapshot_and_upload(
         The uploaded asset's name.
     """
     release_id, existing_assets = await releases.get_or_create_release()
-    name = f"state-{_timestamp()}.enc"
 
     with tempfile.TemporaryDirectory() as tmp_name:
         archive_path = Path(tmp_name) / "state.tar.gz"
         build_snapshot_archive(data_dir, iw_db_path, archive_path)
         encrypted = encrypt_file(archive_path, key)
 
-    uploaded = await releases.upload_asset(release_id, name, encrypted)
+    # A fresh name each attempt: a timed-out upload may still have landed
+    # (reusing its name gets a 422), and restore takes the newest name.
+    for attempt in range(1, UPLOAD_ATTEMPTS):
+        try:
+            uploaded = await releases.upload_asset(
+                release_id, f"state-{_timestamp()}.enc", encrypted
+            )
+            break
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "state snapshot upload failed (%s, attempt %d of %d); retrying",
+                type(exc).__name__,
+                attempt,
+                UPLOAD_ATTEMPTS,
+            )
+            await asyncio.sleep(UPLOAD_RETRY_SECONDS)
+    else:
+        uploaded = await releases.upload_asset(
+            release_id, f"state-{_timestamp()}.enc", encrypted
+        )
     logger.info("state snapshot uploaded: %s", uploaded.name)
 
     all_assets = sorted(
