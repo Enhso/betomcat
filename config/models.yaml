@@ -412,3 +412,47 @@ models:
     price_out: 0
     context_tokens: 1048576
     notes: "Disabled 2026-11-20: OpenRouter 403 on 9/9 live calls since 17 Nov, 'only available on agentic harnesses'."
+
+  - id: openai/gpt-6.2-astra
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 8
+    price_out: 40
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-11-23 (released 2026-11-17); not probed yet."
+
+  - id: openai/gpt-6.2-astra-pro
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 8
+    price_out: 40
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-11-23 (released 2026-11-17); not probed yet."
+
+  - id: openai/gpt-6.2-sol
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 2
+    price_out: 10
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-11-23 (released 2026-11-17); not probed yet."
+
+  - id: openai/gpt-6.2-sol-pro
+    tier: frontier
+    enabled: true
+    max_tokens: 8000
+    reasoning:
+      effort: high
+    price_in: 2
+    price_out: 10
+    context_tokens: 1050000
+    notes: "Added by the weekly model check on 2026-11-23 (released 2026-11-17); not probed yet."
